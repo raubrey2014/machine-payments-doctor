@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import type { CheckResponse, CheckResult, CheckStatus, Protocol } from "./api/check/route";
+import type { CheckResponse, CheckResult, CheckStatus } from "./api/check/route";
 
 const STATUS_CONFIG: Record<CheckStatus, { icon: string; color: string; bg: string; border: string }> = {
   pass: {
@@ -41,13 +41,13 @@ function CheckRow({ check }: { check: CheckResult }) {
         onClick={() => hasData && setOpen((v) => !v)}
         className={`w-full flex items-start gap-3 px-4 py-3 text-left ${hasData ? "cursor-pointer" : "cursor-default"}`}
       >
-        <span className={`mt-0.5 text-base font-bold shrink-0 ${cfg.color}`}>{cfg.icon}</span>
+        <span className={`mt-0.5 text-base font-bold shrink-0 w-4 text-center ${cfg.color}`}>
+          {cfg.icon}
+        </span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium text-sm text-zinc-900 dark:text-zinc-100">{check.label}</span>
-            <span
-              className={`text-xs font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${cfg.color} ${cfg.bg}`}
-            >
+            <span className={`text-xs font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${cfg.color} ${cfg.bg}`}>
               {check.status}
             </span>
           </div>
@@ -68,20 +68,6 @@ function CheckRow({ check }: { check: CheckResult }) {
   );
 }
 
-function ProtocolBadge({ protocol }: { protocol: Protocol }) {
-  const config: Record<Protocol, { label: string; color: string; bg: string }> = {
-    x402: { label: "x402", color: "text-violet-700 dark:text-violet-300", bg: "bg-violet-100 dark:bg-violet-900/40" },
-    L402: { label: "L402", color: "text-orange-700 dark:text-orange-300", bg: "bg-orange-100 dark:bg-orange-900/40" },
-    unknown: { label: "unknown protocol", color: "text-zinc-600 dark:text-zinc-400", bg: "bg-zinc-100 dark:bg-zinc-800" },
-  };
-  const c = config[protocol];
-  return (
-    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.color} ${c.bg}`}>
-      {c.label}
-    </span>
-  );
-}
-
 function ScoreBadge({ checks }: { checks: CheckResult[] }) {
   const applicable = checks.filter((c) => c.status !== "skip");
   const passed = applicable.filter((c) => c.status === "pass").length;
@@ -89,40 +75,69 @@ function ScoreBadge({ checks }: { checks: CheckResult[] }) {
   const warned = applicable.filter((c) => c.status === "warn").length;
   const score = applicable.length > 0 ? Math.round((passed / applicable.length) * 100) : 0;
 
-  let color = "text-emerald-600 dark:text-emerald-400";
-  if (score < 50) color = "text-red-600 dark:text-red-400";
-  else if (score < 80) color = "text-amber-600 dark:text-amber-400";
+  const color =
+    score >= 80
+      ? "text-emerald-600 dark:text-emerald-400"
+      : score >= 50
+      ? "text-amber-600 dark:text-amber-400"
+      : "text-red-600 dark:text-red-400";
 
   return (
-    <div className="flex items-center gap-6 flex-wrap">
+    <div className="flex items-center gap-6">
       <div className="text-center">
-        <div className={`text-4xl font-bold ${color}`}>{score}%</div>
-        <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">compliance score</div>
+        <div className={`text-4xl font-bold tabular-nums ${color}`}>{score}%</div>
+        <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">compliance</div>
       </div>
       <div className="flex gap-4 text-sm">
-        <div className="text-center">
-          <div className="font-semibold text-emerald-600 dark:text-emerald-400">{passed}</div>
-          <div className="text-xs text-zinc-500">passed</div>
-        </div>
-        <div className="text-center">
-          <div className="font-semibold text-amber-600 dark:text-amber-400">{warned}</div>
-          <div className="text-xs text-zinc-500">warnings</div>
-        </div>
-        <div className="text-center">
-          <div className="font-semibold text-red-600 dark:text-red-400">{failed}</div>
-          <div className="text-xs text-zinc-500">failed</div>
-        </div>
+        {[
+          { val: passed, label: "passed", color: "text-emerald-600 dark:text-emerald-400" },
+          { val: warned, label: "warnings", color: "text-amber-600 dark:text-amber-400" },
+          { val: failed, label: "failed", color: "text-red-600 dark:text-red-400" },
+        ].map(({ val, label, color }) => (
+          <div key={label} className="text-center">
+            <div className={`font-semibold ${color}`}>{val}</div>
+            <div className="text-xs text-zinc-500">{label}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
+function doctorPrompt(url: string): string {
+  return `You are testing an x402-compliant API endpoint for Machine Payments Protocol (MPP) compliance.
+
+Endpoint: ${url}
+
+Using the @x402/fetch package (or raw fetch with the x402 protocol), do the following:
+
+1. Make a GET request to ${url} without any payment credentials.
+   - Confirm the response is HTTP 402 Payment Required.
+   - Read the X-Payment-Required header and decode the base64 JSON payload to see what payment options are available (network, asset, amount, payTo address).
+
+2. Construct a valid x402 PaymentPayload for one of the offered payment methods.
+   - Select the lowest-cost option.
+   - Show the full PaymentPayload JSON before encoding.
+
+3. Base64-encode the PaymentPayload and retry the request with the X-Payment header set.
+   - Confirm the response is 2xx.
+   - Show the X-Payment-Response header from the successful response.
+
+4. Report:
+   - Which network/asset was used
+   - The payment amount
+   - Whether the payTo address received the funds
+   - The full response body
+
+Use the MPP discovery spec at https://mpp.dev/advanced/discovery as reference.`.trim();
+}
+
 export default function Home() {
   const [url, setUrl] = useState("");
-  const [paymentToken, setPaymentToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<CheckResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [promptCopied, setPromptCopied] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
 
   async function runCheck(e: React.FormEvent) {
@@ -137,7 +152,7 @@ export default function Home() {
       const res = await fetch("/api/check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: url.trim(), paymentToken: paymentToken.trim() }),
+        body: JSON.stringify({ url: url.trim() }),
       });
 
       if (!res.ok) {
@@ -156,6 +171,13 @@ export default function Home() {
     }
   }
 
+  async function copyPrompt() {
+    if (!result) return;
+    await navigator.clipboard.writeText(doctorPrompt(result.url));
+    setPromptCopied(true);
+    setTimeout(() => setPromptCopied(false), 2000);
+  }
+
   return (
     <main className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
       {/* Header */}
@@ -163,13 +185,21 @@ export default function Home() {
         <div className="max-w-2xl mx-auto px-4 py-6">
           <div className="flex items-center gap-3 mb-1">
             <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center text-white font-bold text-sm">
-              M
+              +
             </div>
             <h1 className="text-xl font-bold tracking-tight">Machine Payments Doctor</h1>
           </div>
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Diagnose and validate that your endpoint is compliant with the{" "}
-            <span className="font-medium text-zinc-700 dark:text-zinc-300">Machine Payments Protocol</span>
+            Diagnose your{" "}
+            <a
+              href="https://mpp.dev"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-violet-600 dark:text-violet-400 hover:underline"
+            >
+              MPP
+            </a>
+            -compliant endpoint
           </p>
         </div>
       </div>
@@ -177,69 +207,30 @@ export default function Home() {
       <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
         {/* Form */}
         <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 shadow-sm">
-          <form onSubmit={runCheck} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1.5" htmlFor="url">
-                Endpoint URL
-              </label>
-              <input
-                id="url"
-                type="url"
-                required
-                placeholder="https://api.example.com/v1/resource"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition"
-              />
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-                The URL of the 402-protected resource to validate
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1.5" htmlFor="token">
-                Payment Token{" "}
-                <span className="text-zinc-400 font-normal">(optional)</span>
-              </label>
-              <input
-                id="token"
-                type="text"
-                placeholder={
-                  result?.protocol === "x402"
-                    ? "base64-encoded PaymentPayload (X-Payment)"
-                    : result?.protocol === "L402"
-                    ? "macaroon:preimage (L402)"
-                    : "macaroon:preimage or base64 PaymentPayload"
-                }
-                value={paymentToken}
-                onChange={(e) => setPaymentToken(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition"
-              />
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-                x402: base64 PaymentPayload sent as <code className="font-mono">X-Payment</code> header ·{" "}
-                L402: <code className="font-mono">macaroon:preimage</code> sent as <code className="font-mono">Authorization: L402</code>
-              </p>
-            </div>
-
+          <form onSubmit={runCheck} className="flex gap-2">
+            <input
+              type="url"
+              required
+              placeholder="https://api.example.com/v1/endpoint"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              className="flex-1 px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition"
+            />
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-2.5 px-4 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2"
+              className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 shrink-0"
             >
               {loading ? (
-                <span className="flex items-center justify-center gap-2">
+                <span className="flex items-center gap-2">
                   <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-                    />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
                   </svg>
-                  Running checks…
+                  Checking…
                 </span>
               ) : (
-                "Run MPP Checks"
+                "Check"
               )}
             </button>
           </form>
@@ -256,12 +247,9 @@ export default function Home() {
         {result && (
           <div ref={resultsRef} className="space-y-4">
             <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 shadow-sm">
-              <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
+              <div className="flex items-start justify-between gap-4 flex-wrap mb-5">
                 <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="font-semibold text-sm">Results</h2>
-                    <ProtocolBadge protocol={result.protocol} />
-                  </div>
+                  <h2 className="font-semibold text-sm">Diagnosis</h2>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 font-mono break-all">
                     {result.url}
                   </p>
@@ -275,30 +263,56 @@ export default function Home() {
                 ))}
               </div>
 
-              <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-4">
-                Tested at {new Date(result.testedAt).toLocaleString()}
-              </p>
+              <div className="mt-4 pt-4 border-t border-zinc-100 dark:border-zinc-800 flex items-center justify-between flex-wrap gap-3">
+                <p className="text-xs text-zinc-400 dark:text-zinc-600">
+                  Tested {new Date(result.testedAt).toLocaleString()} ·{" "}
+                  <a
+                    href="https://mpp.dev/advanced/discovery"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-violet-500 hover:underline"
+                  >
+                    MPP discovery spec ↗
+                  </a>
+                </p>
+
+                {/* Doctor prompt button */}
+                <button
+                  onClick={copyPrompt}
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/40 transition"
+                >
+                  {promptCopied ? (
+                    <>
+                      <span>✓</span> Copied!
+                    </>
+                  ) : (
+                    <>
+                      <span>✦</span> Copy doctor prompt
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
-            {/* Check legend */}
-            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 shadow-sm">
-              <h3 className="font-semibold text-sm mb-3">What does each check verify?</h3>
-              <dl className="space-y-2 text-xs text-zinc-600 dark:text-zinc-400">
-                {[
-                  ["Returns 402 without payment", "Unauthenticated requests must return HTTP 402 Payment Required, not 200 or 401."],
-                  ["Payment details on 402", "x402: X-Payment-Required header with base64 PaymentPayload JSON. L402: WWW-Authenticate: L402 header with invoice + macaroon."],
-                  ["Returns 200 with payment token", "x402: send payment proof as X-Payment header. L402: send macaroon:preimage as Authorization: L402. Both must return 2xx."],
-                  ["openapi.json", "A machine-readable API spec at {base}/openapi.json lets agents discover available endpoints."],
-                  [".well-known/agent-card", "An agent card at {base}/.well-known/agent-card describes the service identity and capabilities for AI agents."],
-                  ["CORS headers", "Cross-origin requests must be permitted so browser-based agents can call the API."],
-                  ["JSON Content-Type on 402", "Machine clients expect application/json on error responses to parse payment details."],
-                ].map(([term, def]) => (
-                  <div key={term} className="flex gap-2">
-                    <dt className="font-medium text-zinc-700 dark:text-zinc-300 shrink-0">{term}:</dt>
-                    <dd>{def}</dd>
-                  </div>
-                ))}
-              </dl>
+            {/* Doctor prompt preview */}
+            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-sm">
+              <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-sm">Doctor prompt</h3>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                    Give this to Claude to actually test your endpoint with x402 payments
+                  </p>
+                </div>
+                <button
+                  onClick={copyPrompt}
+                  className="text-xs px-2.5 py-1 rounded-md bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition text-zinc-600 dark:text-zinc-300"
+                >
+                  {promptCopied ? "Copied!" : "Copy"}
+                </button>
+              </div>
+              <pre className="text-xs text-zinc-600 dark:text-zinc-400 p-4 overflow-auto max-h-72 whitespace-pre-wrap leading-relaxed">
+                {doctorPrompt(result.url)}
+              </pre>
             </div>
           </div>
         )}
@@ -306,23 +320,36 @@ export default function Home() {
         {/* Empty state */}
         {!result && !loading && (
           <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 shadow-sm">
-            <h3 className="font-semibold text-sm mb-3">Checks performed</h3>
-            <ul className="space-y-2 text-sm text-zinc-600 dark:text-zinc-400">
+            <h3 className="font-semibold text-sm mb-3">What gets checked</h3>
+            <ul className="space-y-2.5 text-sm text-zinc-600 dark:text-zinc-400">
               {[
-                "Returns HTTP 402 without a payment credential",
-                "Includes payment details in 402 headers (x402: X-Payment-Required, L402: WWW-Authenticate)",
-                "Returns 2xx when a valid payment token is provided (auto-detects x402 vs L402)",
-                "Exposes openapi.json at the root",
-                "Exposes .well-known/agent-card at the root",
-                "Returns CORS headers permitting cross-origin access",
-                "Uses application/json Content-Type on 402 responses",
-              ].map((item) => (
-                <li key={item} className="flex items-start gap-2">
+                ["Returns HTTP 402 without payment", "Core MPP requirement — unauthenticated requests must return 402"],
+                ["x402 payment details on 402", "X-Payment-Required header with base64 PaymentPayload JSON"],
+                ["openapi.json", "MPP discovery document with x-payment-info extension"],
+                ["llms.txt", "AI context file so agents understand your service"],
+                [".well-known/agent-card.json", "Agent identity card for machine-to-machine discovery"],
+                ["CORS headers", "Cross-origin access for browser-based agents"],
+              ].map(([label, desc]) => (
+                <li key={label} className="flex items-start gap-3">
                   <span className="text-violet-500 shrink-0 mt-0.5">›</span>
-                  {item}
+                  <span>
+                    <span className="font-medium text-zinc-700 dark:text-zinc-300">{label}</span>
+                    <span className="text-zinc-500 dark:text-zinc-500"> — {desc}</span>
+                  </span>
                 </li>
               ))}
             </ul>
+            <p className="mt-4 text-xs text-zinc-400 dark:text-zinc-600">
+              Learn more:{" "}
+              <a
+                href="https://mpp.dev/advanced/discovery"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-violet-500 hover:underline"
+              >
+                MPP discovery spec ↗
+              </a>
+            </p>
           </div>
         )}
       </div>
