@@ -54,15 +54,56 @@ function resolveUrl(base: string, path: string): string {
   return `${base.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
 }
 
-// ── Asset constants ───────────────────────────────────────────────────────────
+// ── Network + asset registry ──────────────────────────────────────────────────
 
-const USDC_MAINNET = "0x20c000000000000000000000b9537d11c60e8b50";
-const TESTNET_ASSETS = new Set([
-  "0x20c0000000000000000000000000000000000000",
-  "0x20c0000000000000000000000000000000000001",
-  "0x20c0000000000000000000000000000000000002",
-  "0x20c0000000000000000000000000000000000003",
-]);
+const NETWORK_NAMES: Record<string, string> = {
+  "eip155:1": "Ethereum",
+  "eip155:8453": "Base",
+  "eip155:137": "Polygon",
+  "eip155:42161": "Arbitrum",
+  "eip155:10": "Optimism",
+  "eip155:43114": "Avalanche",
+  "eip155:56": "BNB Chain",
+  "eip155:1301": "Unichain Sepolia",
+  "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp": "Solana",
+  "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1": "Solana Devnet",
+};
+
+// Keyed by "network:asset" (both normalised). Solana addresses are case-sensitive.
+// EVM addresses are lowercased for comparison.
+const MAINNET_USDC: Record<string, string> = {
+  // EVM chains — USDC (native Circle)
+  "eip155:1:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "USDC",
+  "eip155:8453:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": "USDC",
+  "eip155:137:0x3c499c542cef5e3811e1192ce70d8cc03d5c3359": "USDC",
+  "eip155:42161:0xaf88d065e77c8cc2239327c5edb3a432268e5831": "USDC",
+  "eip155:10:0x0b2c639c533813f4aa9d7837caf62653d097ff85": "USDC",
+  "eip155:43114:0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e": "USDC",
+  // Tempo/MPP-specific USDC identifier (no network prefix)
+  "0x20c000000000000000000000b9537d11c60e8b50": "USDC (Tempo)",
+  // Solana mainnet USDC
+  "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": "USDC",
+};
+
+// Testnet / fake tokens — warn when present
+const TESTNET_TOKENS: Record<string, string> = {
+  // PathUSD testnet tokens
+  "0x20c0000000000000000000000000000000000000": "PathUSD (testnet)",
+  "0x20c0000000000000000000000000000000000001": "PathUSD (testnet)",
+  "0x20c0000000000000000000000000000000000002": "PathUSD (testnet)",
+  "0x20c0000000000000000000000000000000000003": "PathUSD (testnet)",
+  // Solana devnet USDC
+  "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1:4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU": "USDC (Solana devnet)",
+};
+
+interface AcceptedAsset {
+  network: string;       // raw, e.g. "eip155:8453"
+  networkName: string;   // human, e.g. "Base"
+  asset: string;         // normalised
+  tokenName?: string;    // e.g. "USDC"
+  isMainnetUsdc: boolean;
+  isTestnet: boolean;
+}
 
 function decodePaymentRequired(header: string): unknown {
   try {
@@ -72,22 +113,65 @@ function decodePaymentRequired(header: string): unknown {
   }
 }
 
-function extractAssets(decoded: unknown): string[] {
+function normaliseAsset(network: string, asset: string): string {
+  // EVM addresses are hex, lowercase for comparison; Solana keeps case
+  return network.startsWith("eip155:") ? asset.toLowerCase() : asset;
+}
+
+function extractAcceptedAssets(decoded: unknown): AcceptedAsset[] {
   if (!decoded || typeof decoded !== "object") return [];
-  const arr = Array.isArray(decoded) ? decoded : [decoded];
-  return arr.flatMap((entry) => {
-    if (!entry || typeof entry !== "object") return [];
-    const e = entry as Record<string, unknown>;
-    const assets: string[] = [];
-    if (typeof e.asset === "string") assets.push(e.asset.toLowerCase());
-    if (Array.isArray(e.accepts)) {
-      for (const a of e.accepts) {
-        if (a && typeof a === "object" && typeof (a as Record<string, unknown>).asset === "string") {
-          assets.push(((a as Record<string, unknown>).asset as string).toLowerCase());
+
+  // Collect raw {network, asset} pairs from either the x402 v2 `accepts` array
+  // or from a top-level array of PaymentRequirement objects (older/alternative format)
+  const raw: Array<{ network?: string; asset?: string }> = [];
+
+  if (Array.isArray(decoded)) {
+    // Older format: array of requirements at top level
+    for (const item of decoded) {
+      if (item && typeof item === "object") {
+        const e = item as Record<string, unknown>;
+        if (typeof e.asset === "string") raw.push({ network: String(e.network ?? ""), asset: e.asset });
+        if (Array.isArray(e.accepts)) {
+          for (const a of e.accepts) {
+            if (a && typeof a === "object") {
+              const ae = a as Record<string, unknown>;
+              if (typeof ae.asset === "string") raw.push({ network: String(ae.network ?? ""), asset: ae.asset });
+            }
+          }
         }
       }
     }
-    return assets;
+  } else {
+    // x402 v2: { x402Version, resource, accepts: [...] }
+    const obj = decoded as Record<string, unknown>;
+    if (Array.isArray(obj.accepts)) {
+      for (const a of obj.accepts) {
+        if (a && typeof a === "object") {
+          const ae = a as Record<string, unknown>;
+          if (typeof ae.asset === "string") raw.push({ network: String(ae.network ?? ""), asset: ae.asset });
+        }
+      }
+    }
+    // Also handle a bare top-level asset field
+    if (typeof obj.asset === "string") raw.push({ network: String(obj.network ?? ""), asset: obj.asset });
+  }
+
+  return raw.filter((r): r is { network: string; asset: string } => typeof r.asset === "string").map(({ network = "", asset }) => {
+    const norm = normaliseAsset(network, asset);
+    const networkKey = `${network}:${norm}`;
+    const bareKey = norm; // for Tempo-style addresses with no network
+
+    const tokenName = MAINNET_USDC[networkKey] ?? MAINNET_USDC[bareKey];
+    const testnetName = TESTNET_TOKENS[networkKey] ?? TESTNET_TOKENS[bareKey];
+
+    return {
+      network,
+      networkName: NETWORK_NAMES[network] ?? network ?? "unknown network",
+      asset: norm,
+      tokenName: tokenName ?? testnetName,
+      isMainnetUsdc: Boolean(tokenName),
+      isTestnet: Boolean(testnetName),
+    };
   });
 }
 
@@ -260,49 +344,60 @@ async function checkEndpoint(endpoint: DiscoveredEndpoint): Promise<EndpointResu
     });
   }
 
-  // Check 3: assets
+  // Check 3: accepted assets — mainnet USDC + network names + testnet detection
   if (decodedPayload !== null) {
-    const assets = extractAssets(decodedPayload);
-    const hasUsdcMainnet = assets.includes(USDC_MAINNET);
-    const testnetFound = assets.filter((a) => TESTNET_ASSETS.has(a));
-    const unknownAssets = assets.filter((a) => a !== USDC_MAINNET && !TESTNET_ASSETS.has(a));
+    const assets = extractAcceptedAssets(decodedPayload);
 
     if (assets.length === 0) {
       checks.push({
         id: "payment_assets",
-        label: "Mainnet USDC accepted",
+        label: "Accepted assets",
         status: "warn",
-        detail: "No asset addresses found in payload",
-      });
-    } else if (!hasUsdcMainnet) {
-      const parts: string[] = [];
-      if (testnetFound.length > 0) parts.push(`testnet PathUSD (${testnetFound.join(", ")})`);
-      if (unknownAssets.length > 0) parts.push(unknownAssets.join(", "));
-      checks.push({
-        id: "payment_assets",
-        label: "Mainnet USDC accepted",
-        status: "fail",
-        detail: `Mainnet USDC not offered. Found: ${parts.join("; ") || assets.join(", ")}`,
-      });
-    } else if (testnetFound.length > 0) {
-      checks.push({
-        id: "payment_assets",
-        label: "Mainnet USDC accepted",
-        status: "warn",
-        detail: `USDC ✓ — but testnet PathUSD tokens also accepted (${testnetFound.join(", ")}). Can confuse agents in production.`,
+        detail: "No asset/network pairs found in payment payload",
       });
     } else {
-      checks.push({
-        id: "payment_assets",
-        label: "Mainnet USDC accepted",
-        status: "pass",
-        detail: `Mainnet USDC accepted${unknownAssets.length > 0 ? ` · also: ${unknownAssets.join(", ")}` : ""}`,
-      });
+      const mainnetUsdc = assets.filter((a) => a.isMainnetUsdc);
+      const testnet = assets.filter((a) => a.isTestnet);
+      const unknown = assets.filter((a) => !a.isMainnetUsdc && !a.isTestnet);
+
+      const usdcNetworks = [...new Set(mainnetUsdc.map((a) => a.networkName))];
+      const testnetNames = [...new Set(testnet.map((a) => a.tokenName ?? a.asset))];
+      const unknownDesc = unknown.map((a) => `${a.asset.slice(0, 10)}… on ${a.networkName}`);
+
+      if (mainnetUsdc.length === 0) {
+        const foundParts: string[] = [];
+        if (testnet.length > 0) foundParts.push(`testnet tokens (${testnetNames.join(", ")})`);
+        if (unknown.length > 0) foundParts.push(`unrecognised (${unknownDesc.join(", ")})`);
+        checks.push({
+          id: "payment_assets",
+          label: "Accepted assets",
+          status: "fail",
+          detail: `No mainnet USDC found. Accepted: ${foundParts.join("; ") || assets.map((a) => a.asset).join(", ")}`,
+          data: assets,
+        });
+      } else if (testnet.length > 0) {
+        checks.push({
+          id: "payment_assets",
+          label: "Accepted assets",
+          status: "warn",
+          detail: `USDC on ${usdcNetworks.join(", ")} ✓ — also accepts testnet tokens (${testnetNames.join(", ")}), which can confuse agents in production`,
+          data: assets,
+        });
+      } else {
+        const extras = unknown.length > 0 ? ` · also: ${unknownDesc.join(", ")}` : "";
+        checks.push({
+          id: "payment_assets",
+          label: "Accepted assets",
+          status: "pass",
+          detail: `USDC on ${usdcNetworks.join(", ")}${extras}`,
+          data: assets,
+        });
+      }
     }
   } else {
     checks.push({
       id: "payment_assets",
-      label: "Mainnet USDC accepted",
+      label: "Accepted assets",
       status: "skip",
       detail: "Skipped — no decoded payload to inspect",
     });
