@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import type { CheckResponse, CheckResult, CheckStatus } from "./api/check/route";
+import type { CheckResponse, CheckResult, CheckStatus, Protocol } from "./api/check/route";
 
 const STATUS_CONFIG: Record<CheckStatus, { icon: string; color: string; bg: string; border: string }> = {
   pass: {
@@ -65,6 +65,20 @@ function CheckRow({ check }: { check: CheckResult }) {
         </div>
       )}
     </div>
+  );
+}
+
+function ProtocolBadge({ protocol }: { protocol: Protocol }) {
+  const config: Record<Protocol, { label: string; color: string; bg: string }> = {
+    x402: { label: "x402", color: "text-violet-700 dark:text-violet-300", bg: "bg-violet-100 dark:bg-violet-900/40" },
+    L402: { label: "L402", color: "text-orange-700 dark:text-orange-300", bg: "bg-orange-100 dark:bg-orange-900/40" },
+    unknown: { label: "unknown protocol", color: "text-zinc-600 dark:text-zinc-400", bg: "bg-zinc-100 dark:bg-zinc-800" },
+  };
+  const c = config[protocol];
+  return (
+    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.color} ${c.bg}`}>
+      {c.label}
+    </span>
   );
 }
 
@@ -184,19 +198,26 @@ export default function Home() {
 
             <div>
               <label className="block text-sm font-medium mb-1.5" htmlFor="token">
-                L402 Payment Token{" "}
+                Payment Token{" "}
                 <span className="text-zinc-400 font-normal">(optional)</span>
               </label>
               <input
                 id="token"
                 type="text"
-                placeholder="macaroon:preimage"
+                placeholder={
+                  result?.protocol === "x402"
+                    ? "base64-encoded PaymentPayload (X-Payment)"
+                    : result?.protocol === "L402"
+                    ? "macaroon:preimage (L402)"
+                    : "macaroon:preimage or base64 PaymentPayload"
+                }
                 value={paymentToken}
                 onChange={(e) => setPaymentToken(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition"
               />
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-                Provide a valid L402 token to test authenticated access returns 200
+                x402: base64 PaymentPayload sent as <code className="font-mono">X-Payment</code> header ·{" "}
+                L402: <code className="font-mono">macaroon:preimage</code> sent as <code className="font-mono">Authorization: L402</code>
               </p>
             </div>
 
@@ -237,7 +258,10 @@ export default function Home() {
             <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 shadow-sm">
               <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
                 <div>
-                  <h2 className="font-semibold text-sm">Results</h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-semibold text-sm">Results</h2>
+                    <ProtocolBadge protocol={result.protocol} />
+                  </div>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 font-mono break-all">
                     {result.url}
                   </p>
@@ -262,8 +286,8 @@ export default function Home() {
               <dl className="space-y-2 text-xs text-zinc-600 dark:text-zinc-400">
                 {[
                   ["Returns 402 without payment", "Unauthenticated requests must return HTTP 402 Payment Required, not 200 or 401."],
-                  ["Payment header on 402", "The 402 response should include WWW-Authenticate: L402 or X-Payment-Details so clients know how to pay."],
-                  ["Returns 200 with payment token", "After paying, requests with a valid L402 Authorization header should succeed."],
+                  ["Payment details on 402", "x402: X-Payment-Required header with base64 PaymentPayload JSON. L402: WWW-Authenticate: L402 header with invoice + macaroon."],
+                  ["Returns 200 with payment token", "x402: send payment proof as X-Payment header. L402: send macaroon:preimage as Authorization: L402. Both must return 2xx."],
                   ["openapi.json", "A machine-readable API spec at {base}/openapi.json lets agents discover available endpoints."],
                   [".well-known/agent-card", "An agent card at {base}/.well-known/agent-card describes the service identity and capabilities for AI agents."],
                   ["CORS headers", "Cross-origin requests must be permitted so browser-based agents can call the API."],
@@ -286,8 +310,8 @@ export default function Home() {
             <ul className="space-y-2 text-sm text-zinc-600 dark:text-zinc-400">
               {[
                 "Returns HTTP 402 without a payment credential",
-                "Includes payment instructions in the 402 response headers",
-                "Returns 2xx when a valid L402 token is provided",
+                "Includes payment details in 402 headers (x402: X-Payment-Required, L402: WWW-Authenticate)",
+                "Returns 2xx when a valid payment token is provided (auto-detects x402 vs L402)",
                 "Exposes openapi.json at the root",
                 "Exposes .well-known/agent-card at the root",
                 "Returns CORS headers permitting cross-origin access",
