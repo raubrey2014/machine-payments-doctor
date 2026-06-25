@@ -264,9 +264,11 @@ export default function Home() {
             <h1 className="text-xl font-bold tracking-tight">Machine Payments Doctor</h1>
           </div>
           <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Diagnose your{" "}
+            Diagnose your machine payments integration across{" "}
+            <a href="https://x402.org" target="_blank" rel="noopener noreferrer" className="text-violet-600 dark:text-violet-400 hover:underline">x402</a>
+            {", "}
             <a href="https://mpp.dev" target="_blank" rel="noopener noreferrer" className="text-violet-600 dark:text-violet-400 hover:underline">MPP</a>
-            -compliant service
+            {", and ATXP"}
           </p>
         </div>
       </div>

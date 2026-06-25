@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Machine Payments Doctor",
-  description: "Diagnose and validate that your endpoint is compliant with the Machine Payments Protocol (MPP / L402).",
+  description: "Diagnose your machine payments integration across x402, MPP, and ATXP.",
 };
 
 export default function RootLayout({
