@@ -1,8 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { gradeColors, letterGrade } from "./lib/scoring";
+
+function subscribeToLocation() {
+  return () => {};
+}
+
+function getBrowserDoctorApiUrl() {
+  return `${window.location.origin}/api/check`;
+}
+
+function getServerDoctorApiUrl() {
+  return "/api/check";
+}
 
 // ── Score mockup (static illustration) ───────────────────────────────────────
 
@@ -67,7 +79,14 @@ function ScoreMockup() {
 export default function Home() {
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [agentPromptCopied, setAgentPromptCopied] = useState(false);
+  const doctorApiUrl = useSyncExternalStore(
+    subscribeToLocation,
+    getBrowserDoctorApiUrl,
+    getServerDoctorApiUrl
+  );
   const router = useRouter();
+  const agentPrompt = `Check our MPP integration health with Machine Payments Doctor: curl -X POST ${doctorApiUrl} -H 'Content-Type: application/json' -d '{"url":"<our site URL>"}'`;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -82,6 +101,12 @@ export default function Home() {
     } catch {
       setError("Please enter a valid URL including https://");
     }
+  }
+
+  async function copyAgentPrompt() {
+    await navigator.clipboard.writeText(agentPrompt);
+    setAgentPromptCopied(true);
+    setTimeout(() => setAgentPromptCopied(false), 2000);
   }
 
   return (
@@ -133,6 +158,37 @@ export default function Home() {
         {error && (
           <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>
         )}
+
+        <div className="mt-8 max-w-2xl mx-auto">
+          <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-widest text-zinc-400">
+            <div className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
+            or
+            <div className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
+          </div>
+
+          <div className="mt-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/70 p-4 text-left">
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex items-center rounded-full bg-violet-100 dark:bg-violet-950/60 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-violet-700 dark:text-violet-300">
+                  Agent mode
+                </span>
+                <p className="min-w-0 flex-1 text-sm font-semibold text-zinc-800 dark:text-zinc-100">
+                  Tell your agent to fix the integration for you.
+                </p>
+                <button
+                  type="button"
+                  onClick={copyAgentPrompt}
+                  className="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-700 px-3 py-2 text-xs font-semibold text-white transition"
+                >
+                  {agentPromptCopied ? "✓ Copied!" : "Copy prompt"}
+                </button>
+              </div>
+              <pre className="text-xs font-mono text-zinc-600 dark:text-zinc-400 whitespace-pre overflow-x-auto leading-relaxed">
+                {agentPrompt}
+              </pre>
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* Score section */}
