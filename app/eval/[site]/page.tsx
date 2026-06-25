@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { CheckResultsView } from "../../components/CheckResultsView";
-import type { CheckResponse } from "../../api/check/route";
+import type { CheckResponse } from "../../lib/doctor-types";
 
 export default function EvalPage() {
   const params = useParams<{ site: string }>();
@@ -69,10 +70,10 @@ export default function EvalPage() {
       {/* Nav */}
       <nav className="border-b border-zinc-100 dark:border-zinc-800">
         <div className="max-w-3xl mx-auto px-6 h-14 flex items-center justify-between gap-4">
-          <a href="/" className="flex items-center gap-2 shrink-0">
+          <Link href="/" className="flex items-center gap-2 shrink-0">
             <div className="w-6 h-6 rounded bg-violet-600 flex items-center justify-center text-white font-bold text-[11px]">+</div>
             <span className="font-semibold text-sm">Machine Payments Doctor</span>
-          </a>
+          </Link>
           {/* Inline check-another form */}
           <form onSubmit={handleCheck} className="flex gap-2 flex-1 max-w-sm">
             <input
