@@ -3,32 +3,122 @@
 import { useState, useRef } from "react";
 import type { CheckResponse, CheckResult, CheckStatus, EndpointResult } from "./api/check/route";
 
+// ── Status helpers ────────────────────────────────────────────────────────────
+
 const STATUS_CONFIG: Record<CheckStatus, { icon: string; color: string; bg: string; border: string }> = {
   pass: {
     icon: "✓",
-    color: "text-emerald-700 dark:text-emerald-400",
+    color: "text-emerald-600 dark:text-emerald-400",
     bg: "bg-emerald-50 dark:bg-emerald-950/40",
     border: "border-emerald-200 dark:border-emerald-800",
   },
   fail: {
     icon: "✗",
-    color: "text-red-700 dark:text-red-400",
+    color: "text-red-600 dark:text-red-400",
     bg: "bg-red-50 dark:bg-red-950/40",
     border: "border-red-200 dark:border-red-800",
   },
   warn: {
     icon: "⚠",
-    color: "text-amber-700 dark:text-amber-400",
+    color: "text-amber-600 dark:text-amber-400",
     bg: "bg-amber-50 dark:bg-amber-950/40",
     border: "border-amber-200 dark:border-amber-800",
   },
   skip: {
     icon: "–",
-    color: "text-zinc-500 dark:text-zinc-400",
+    color: "text-zinc-400 dark:text-zinc-500",
     bg: "bg-zinc-50 dark:bg-zinc-900/40",
     border: "border-zinc-200 dark:border-zinc-700",
   },
 };
+
+function worstStatus(checks: CheckResult[]): CheckStatus {
+  if (checks.some((c) => c.status === "fail")) return "fail";
+  if (checks.some((c) => c.status === "warn")) return "warn";
+  if (checks.some((c) => c.status === "pass")) return "pass";
+  return "skip";
+}
+
+function scoreChecks(checks: CheckResult[]): { score: number; total: number } {
+  const applicable = checks.filter((c) => c.status !== "skip");
+  const passed = applicable.filter((c) => c.status === "pass").length;
+  // Warnings count as half-credit
+  const warned = applicable.filter((c) => c.status === "warn").length;
+  const score = applicable.length === 0 ? 0 : Math.round(((passed + warned * 0.5) / applicable.length) * 100);
+  return { score, total: applicable.length };
+}
+
+function letterGrade(score: number): string {
+  if (score >= 90) return "A";
+  if (score >= 80) return "B";
+  if (score >= 70) return "C";
+  if (score >= 60) return "D";
+  return "F";
+}
+
+function gradeColor(score: number) {
+  if (score >= 80) return { text: "text-emerald-600 dark:text-emerald-400", ring: "border-emerald-400 dark:border-emerald-600" };
+  if (score >= 60) return { text: "text-amber-600 dark:text-amber-400", ring: "border-amber-400 dark:border-amber-600" };
+  return { text: "text-red-600 dark:text-red-400", ring: "border-red-400 dark:border-red-600" };
+}
+
+// ── Category scoring ──────────────────────────────────────────────────────────
+
+interface Category {
+  id: string;
+  label: string;
+  description: string;
+  weight: number; // 0–1
+  baseCheckIds: string[];
+  endpointCheckIds: string[];
+}
+
+const CATEGORIES: Category[] = [
+  {
+    id: "discovery",
+    label: "Discovery",
+    description: "Can agents find, understand, and authenticate your service?",
+    weight: 0.33,
+    baseCheckIds: ["openapi_json", "llms_txt", "agent_card"],
+    endpointCheckIds: [],
+  },
+  {
+    id: "protocol",
+    label: "Protocol",
+    description: "Does the x402 payment flow work correctly across endpoints?",
+    weight: 0.50,
+    baseCheckIds: [],
+    endpointCheckIds: ["402", "x402_header", "payment_assets"],
+  },
+  {
+    id: "accessibility",
+    label: "Accessibility",
+    description: "Is the service reachable from browser-based and cross-origin agents?",
+    weight: 0.17,
+    baseCheckIds: ["cors"],
+    endpointCheckIds: [],
+  },
+];
+
+function getCategoryChecks(cat: Category, result: CheckResponse): CheckResult[] {
+  const base = result.baseChecks.filter((c) => cat.baseCheckIds.includes(c.id));
+  const endpoint = result.endpoints.flatMap((ep) =>
+    ep.checks.filter((c) => cat.endpointCheckIds.includes(c.id))
+  );
+  return [...base, ...endpoint];
+}
+
+function overallScore(result: CheckResponse): number {
+  return Math.round(
+    CATEGORIES.reduce((sum, cat) => {
+      const checks = getCategoryChecks(cat, result);
+      const { score } = scoreChecks(checks);
+      return sum + score * cat.weight;
+    }, 0)
+  );
+}
+
+// ── Components ────────────────────────────────────────────────────────────────
 
 function CheckRow({ check }: { check: CheckResult }) {
   const [open, setOpen] = useState(false);
@@ -39,27 +129,18 @@ function CheckRow({ check }: { check: CheckResult }) {
     <div className={`rounded-lg border ${cfg.border} ${cfg.bg} overflow-hidden`}>
       <button
         onClick={() => hasData && setOpen((v) => !v)}
-        className={`w-full flex items-start gap-3 px-3 py-2.5 text-left ${hasData ? "cursor-pointer" : "cursor-default"}`}
+        className={`w-full flex items-center gap-3 px-3 py-2.5 text-left ${hasData ? "cursor-pointer" : "cursor-default"}`}
       >
-        <span className={`mt-0.5 text-sm font-bold shrink-0 w-4 text-center ${cfg.color}`}>
-          {cfg.icon}
-        </span>
+        <span className={`text-sm font-bold shrink-0 w-4 text-center ${cfg.color}`}>{cfg.icon}</span>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-xs text-zinc-900 dark:text-zinc-100">{check.label}</span>
-            <span className={`text-xs font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${cfg.color} ${cfg.bg}`}>
-              {check.status}
-            </span>
-          </div>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 break-all">{check.detail}</p>
+          <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200">{check.label}</span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400 ml-2 break-all">{check.detail}</span>
         </div>
-        {hasData && (
-          <span className="text-zinc-400 text-xs shrink-0 mt-0.5">{open ? "▲" : "▼"}</span>
-        )}
+        {hasData && <span className="text-zinc-400 text-xs shrink-0">{open ? "▲" : "▼"}</span>}
       </button>
       {open && hasData && (
         <div className="border-t border-zinc-200 dark:border-zinc-700 px-3 py-2.5">
-          <pre className="text-xs text-zinc-700 dark:text-zinc-300 overflow-auto max-h-48 whitespace-pre-wrap">
+          <pre className="text-xs text-zinc-600 dark:text-zinc-400 overflow-auto max-h-48 whitespace-pre-wrap">
             {JSON.stringify(check.data, null, 2)}
           </pre>
         </div>
@@ -68,108 +149,109 @@ function CheckRow({ check }: { check: CheckResult }) {
   );
 }
 
-function statusDot(status: CheckStatus) {
-  const colors: Record<CheckStatus, string> = {
-    pass: "bg-emerald-500",
-    fail: "bg-red-500",
-    warn: "bg-amber-400",
-    skip: "bg-zinc-300 dark:bg-zinc-600",
-  };
-  return <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${colors[status]}`} />;
-}
-
-function worstStatus(checks: CheckResult[]): CheckStatus {
-  if (checks.some((c) => c.status === "fail")) return "fail";
-  if (checks.some((c) => c.status === "warn")) return "warn";
-  if (checks.some((c) => c.status === "pass")) return "pass";
-  return "skip";
-}
-
-function EndpointCard({ ep }: { ep: EndpointResult }) {
+function EndpointRow({ ep }: { ep: EndpointResult }) {
   const [open, setOpen] = useState(false);
   const worst = worstStatus(ep.checks);
   const cfg = STATUS_CONFIG[worst];
 
   return (
-    <div className={`rounded-lg border ${cfg.border} overflow-hidden`}>
+    <div className="border border-zinc-200 dark:border-zinc-700 rounded-lg overflow-hidden">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-zinc-50/50 dark:hover:bg-zinc-800/30 transition"
+        className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition"
       >
-        {statusDot(worst)}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase">
-              {ep.method}
-            </span>
-            <code className="text-xs font-mono text-zinc-800 dark:text-zinc-200 break-all">{ep.path}</code>
-          </div>
-          {ep.summary && (
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 truncate">{ep.summary}</p>
-          )}
+        <span className={`text-sm font-bold shrink-0 w-4 text-center ${cfg.color}`}>{cfg.icon}</span>
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          <span className="text-xs font-semibold text-zinc-400 uppercase shrink-0">{ep.method}</span>
+          <code className="text-xs font-mono text-zinc-700 dark:text-zinc-300 truncate">{ep.path}</code>
+          {ep.summary && <span className="text-xs text-zinc-400 truncate hidden sm:inline">— {ep.summary}</span>}
         </div>
-        <div className="flex items-center gap-1 shrink-0">
-          {ep.checks.map((c) => (
-            <span key={c.id}>{statusDot(c.status)}</span>
-          ))}
-          <span className="text-zinc-400 text-xs ml-1">{open ? "▲" : "▼"}</span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {ep.checks.map((c) => {
+            const c2 = STATUS_CONFIG[c.status];
+            return (
+              <span key={c.id} className={`text-xs font-bold ${c2.color}`} title={c.label}>
+                {c2.icon}
+              </span>
+            );
+          })}
+          <span className="text-zinc-300 dark:text-zinc-600 text-xs ml-1">{open ? "▴" : "▾"}</span>
         </div>
       </button>
       {open && (
-        <div className="border-t border-zinc-200 dark:border-zinc-700 px-4 py-3 space-y-2 bg-zinc-50/50 dark:bg-zinc-900/30">
-          <p className="text-xs text-zinc-400 font-mono mb-2 break-all">{ep.fullUrl}</p>
-          {ep.checks.map((c) => (
-            <CheckRow key={c.id} check={c} />
-          ))}
+        <div className="border-t border-zinc-100 dark:border-zinc-800 px-3 pt-1 pb-3 space-y-1.5 bg-zinc-50/60 dark:bg-zinc-900/40">
+          <p className="text-xs font-mono text-zinc-400 py-1.5 break-all">{ep.fullUrl}</p>
+          {ep.checks.map((c) => <CheckRow key={c.id} check={c} />)}
         </div>
       )}
     </div>
   );
 }
 
-function ScorePill({ checks }: { checks: CheckResult[] }) {
-  const applicable = checks.filter((c) => c.status !== "skip");
-  const passed = applicable.filter((c) => c.status === "pass").length;
-  const score = applicable.length > 0 ? Math.round((passed / applicable.length) * 100) : 0;
-  const color =
-    score >= 80 ? "text-emerald-600 dark:text-emerald-400" :
-    score >= 50 ? "text-amber-600 dark:text-amber-400" :
-    "text-red-600 dark:text-red-400";
-  return <span className={`font-bold tabular-nums ${color}`}>{score}%</span>;
+function CategoryBar({ cat, score }: { cat: Category; score: number }) {
+  const { text, ring } = gradeColor(score);
+  return (
+    <div className="flex items-center gap-3">
+      <div className="w-28 shrink-0">
+        <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{cat.label}</div>
+        <div className="text-xs text-zinc-400">{Math.round(cat.weight * 100)}% weight</div>
+      </div>
+      <div className="flex-1 h-2 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-700 ${score >= 80 ? "bg-emerald-500" : score >= 60 ? "bg-amber-400" : "bg-red-500"}`}
+          style={{ width: `${score}%` }}
+        />
+      </div>
+      <div className={`w-10 text-right text-sm font-semibold tabular-nums shrink-0 ${text}`}>{score}%</div>
+      <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center text-xs font-bold shrink-0 ${ring} ${text}`}>
+        {letterGrade(score)}
+      </div>
+    </div>
+  );
 }
 
-function OverallScore({ result }: { result: CheckResponse }) {
-  const allChecks = [
-    ...result.baseChecks,
-    ...result.endpoints.flatMap((e) => e.checks),
-  ];
-  const applicable = allChecks.filter((c) => c.status !== "skip");
-  const passed = applicable.filter((c) => c.status === "pass").length;
-  const failed = applicable.filter((c) => c.status === "fail").length;
-  const warned = applicable.filter((c) => c.status === "warn").length;
-  const score = applicable.length > 0 ? Math.round((passed / applicable.length) * 100) : 0;
-  const color =
-    score >= 80 ? "text-emerald-600 dark:text-emerald-400" :
-    score >= 50 ? "text-amber-600 dark:text-amber-400" :
-    "text-red-600 dark:text-red-400";
+function GradeCircle({ score }: { score: number }) {
+  const { text, ring } = gradeColor(score);
+  const grade = letterGrade(score);
+  return (
+    <div className={`w-24 h-24 rounded-full border-4 ${ring} flex flex-col items-center justify-center shrink-0`}>
+      <span className={`text-3xl font-bold leading-none ${text}`}>{grade}</span>
+      <span className="text-xs text-zinc-400 mt-0.5">{score}/100</span>
+    </div>
+  );
+}
+
+function CategorySection({ cat, result }: { cat: Category; result: CheckResponse }) {
+  const allChecks = getCategoryChecks(cat, result);
+  const { score } = scoreChecks(allChecks);
+  const baseChecks = result.baseChecks.filter((c) => cat.baseCheckIds.includes(c.id));
+  const endpointChecks = cat.endpointCheckIds.length > 0;
 
   return (
-    <div className="flex items-center gap-6">
-      <div className="text-center">
-        <div className={`text-4xl font-bold tabular-nums ${color}`}>{score}%</div>
-        <div className="text-xs text-zinc-500 mt-0.5">compliance</div>
+    <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
+        <div>
+          <h3 className="font-semibold text-sm text-zinc-900 dark:text-zinc-100">{cat.label}</h3>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{cat.description}</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className={`text-lg font-bold tabular-nums ${gradeColor(score).text}`}>{score}%</span>
+          <span className={`text-sm font-bold px-2 py-0.5 rounded-full border ${gradeColor(score).ring} ${gradeColor(score).text}`}>
+            {letterGrade(score)}
+          </span>
+        </div>
       </div>
-      <div className="flex gap-4">
-        {[
-          { val: passed, label: "passed", color: "text-emerald-600 dark:text-emerald-400" },
-          { val: warned, label: "warnings", color: "text-amber-600 dark:text-amber-400" },
-          { val: failed, label: "failed", color: "text-red-600 dark:text-red-400" },
-        ].map(({ val, label, color }) => (
-          <div key={label} className="text-center">
-            <div className={`font-semibold text-sm ${color}`}>{val}</div>
-            <div className="text-xs text-zinc-500">{label}</div>
-          </div>
-        ))}
+      <div className="p-4 space-y-2">
+        {baseChecks.map((c) => <CheckRow key={c.id} check={c} />)}
+        {endpointChecks && result.endpoints.length > 0 && (
+          <>
+            <p className="text-xs text-zinc-400 dark:text-zinc-500 pt-1 pb-0.5">
+              {result.endpoints.length} endpoint{result.endpoints.length !== 1 ? "s" : ""} tested
+              {result.totalEndpoints > result.endpoints.length && ` (of ${result.totalEndpoints} in spec)`}
+            </p>
+            {result.endpoints.map((ep) => <EndpointRow key={`${ep.method}:${ep.path}`} ep={ep} />)}
+          </>
+        )}
       </div>
     </div>
   );
@@ -180,7 +262,6 @@ function doctorPrompt(url: string, endpoints: EndpointResult[]): string {
     .slice(0, 3)
     .map((e) => `  - ${e.method} ${e.fullUrl}${e.summary ? ` (${e.summary})` : ""}`)
     .join("\n");
-
   return `You are testing x402-compliant API endpoints for Machine Payments Protocol (MPP) compliance.
 
 Base URL: ${url}
@@ -190,9 +271,9 @@ ${endpointList || `  - GET ${url}`}
 
 For each endpoint:
 
-1. Make a ${endpoints[0]?.method ?? "GET"} request without any payment credentials.
+1. Make a request without any payment credentials.
    - Confirm the response is HTTP 402 Payment Required.
-   - Read the X-Payment-Required header and decode the base64 JSON payload.
+   - Decode the X-Payment-Required base64 JSON payload.
    - Show the payment options: network, asset address, amount, payTo address.
 
 2. Construct a valid x402 PaymentPayload for the lowest-cost option.
@@ -203,13 +284,12 @@ For each endpoint:
    - Confirm the response is 2xx.
    - Show the X-Payment-Response header and response body.
 
-4. Report for each endpoint:
-   - Which network/asset was used and the payment amount
-   - Whether the response was successful
-   - Any unexpected behavior
+4. Report: network/asset used, payment amount, whether successful.
 
 Reference: https://mpp.dev/advanced/discovery`.trim();
 }
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Home() {
   const [url, setUrl] = useState("");
@@ -225,7 +305,6 @@ export default function Home() {
     setLoading(true);
     setError(null);
     setResult(null);
-
     try {
       const res = await fetch("/api/check", {
         method: "POST",
@@ -239,7 +318,7 @@ export default function Home() {
       }
       const data: CheckResponse = await res.json();
       setResult(data);
-      setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
@@ -254,41 +333,54 @@ export default function Home() {
     setTimeout(() => setPromptCopied(false), 2000);
   }
 
+  const score = result ? overallScore(result) : 0;
+
   return (
-    <main className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
-      {/* Header */}
-      <div className="border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
-        <div className="max-w-2xl mx-auto px-4 py-6">
-          <div className="flex items-center gap-3 mb-1">
-            <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center text-white font-bold text-sm">+</div>
-            <h1 className="text-xl font-bold tracking-tight">Machine Payments Doctor</h1>
+    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
+      {/* Nav */}
+      <nav className="border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
+        <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-md bg-violet-600 flex items-center justify-center text-white font-bold text-xs">+</div>
+            <span className="font-semibold text-sm tracking-tight">Machine Payments Doctor</span>
           </div>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          <a
+            href="https://mpp.dev"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition"
+          >
+            mpp.dev ↗
+          </a>
+        </div>
+      </nav>
+
+      <div className="max-w-3xl mx-auto px-4 py-10 space-y-8">
+        {/* Hero */}
+        <div className="text-center space-y-3">
+          <h1 className="text-3xl font-bold tracking-tight">Machine Payments Doctor</h1>
+          <p className="text-zinc-500 dark:text-zinc-400 text-sm max-w-md mx-auto">
             Diagnose your machine payments integration across{" "}
             <a href="https://x402.org" target="_blank" rel="noopener noreferrer" className="text-violet-600 dark:text-violet-400 hover:underline">x402</a>
             {", "}
             <a href="https://mpp.dev" target="_blank" rel="noopener noreferrer" className="text-violet-600 dark:text-violet-400 hover:underline">MPP</a>
             {", and ATXP"}
           </p>
-        </div>
-      </div>
 
-      <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
-        {/* Form */}
-        <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 shadow-sm">
-          <form onSubmit={runCheck} className="flex gap-2">
+          {/* Input */}
+          <form onSubmit={runCheck} className="flex gap-2 max-w-xl mx-auto mt-5">
             <input
               type="url"
               required
               placeholder="https://api.example.com"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              className="flex-1 px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition"
+              className="flex-1 px-4 py-2.5 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition shadow-sm"
             />
             <button
               type="submit"
               disabled={loading}
-              className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 shrink-0"
+              className="px-5 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-700 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-semibold transition shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 shrink-0"
             >
               {loading ? (
                 <span className="flex items-center gap-2">
@@ -305,172 +397,113 @@ export default function Home() {
 
         {/* Error */}
         {error && (
-          <div className="bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          <div className="bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-lg px-4 py-3 text-sm text-red-700 dark:text-red-400 max-w-xl mx-auto">
             {error}
           </div>
         )}
 
         {/* Results */}
         {result && (
-          <div ref={resultsRef} className="space-y-4">
-            {/* Overall score */}
-            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 shadow-sm">
-              <div className="flex items-start justify-between gap-4 flex-wrap">
-                <div>
-                  <h2 className="font-semibold text-sm">
-                    {result.specTitle ?? new URL(result.url).hostname}
-                  </h2>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 font-mono break-all">{result.url}</p>
-                  {result.totalEndpoints > 0 && (
-                    <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
-                      {result.totalEndpoints} payment endpoint{result.totalEndpoints !== 1 ? "s" : ""} in spec
-                      {result.endpoints.length < result.totalEndpoints && ` · testing ${result.endpoints.length}`}
-                    </p>
-                  )}
-                </div>
-                <OverallScore result={result} />
-              </div>
-            </div>
-
-            {/* Discovery checks */}
-            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden">
-              <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800">
-                <h3 className="font-semibold text-sm">Discovery</h3>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">Service-level checks</p>
-              </div>
-              <div className="p-4 space-y-2">
-                {result.baseChecks.map((c) => <CheckRow key={c.id} check={c} />)}
-              </div>
-            </div>
-
-            {/* Endpoint results */}
-            {result.endpoints.length > 0 && (
-              <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden">
-                <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
+          <div ref={resultsRef} className="space-y-5">
+            {/* Score hero card */}
+            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm p-6">
+              <div className="flex items-start gap-6 flex-wrap">
+                <GradeCircle score={score} />
+                <div className="flex-1 min-w-0 space-y-3">
                   <div>
-                    <h3 className="font-semibold text-sm">
-                      Endpoints
-                      <span className="ml-2 text-xs font-normal text-zinc-400">
-                        ({result.endpoints.length} tested
-                        {result.totalEndpoints > result.endpoints.length && ` of ${result.totalEndpoints}`})
-                      </span>
-                    </h3>
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                      Click an endpoint to see its checks
-                    </p>
+                    <h2 className="font-bold text-lg leading-tight">
+                      {result.specTitle ?? new URL(result.url).hostname}
+                    </h2>
+                    <p className="text-xs font-mono text-zinc-400 mt-0.5 break-all">{result.url}</p>
+                    {result.totalEndpoints > 0 && (
+                      <p className="text-xs text-zinc-400 mt-1">
+                        {result.totalEndpoints} payment endpoint{result.totalEndpoints !== 1 ? "s" : ""} discovered via openapi.json
+                      </p>
+                    )}
                   </div>
-                  <div className="flex items-center gap-3 text-xs text-zinc-500">
-                    {[
-                      { status: "pass" as CheckStatus, label: "pass" },
-                      { status: "warn" as CheckStatus, label: "warn" },
-                      { status: "fail" as CheckStatus, label: "fail" },
-                    ].map(({ status, label }) => {
-                      const count = result.endpoints.filter((e) => worstStatus(e.checks) === status).length;
-                      return count > 0 ? (
-                        <span key={label} className="flex items-center gap-1">
-                          {statusDot(status)} {count}
-                        </span>
-                      ) : null;
+                  <div className="space-y-3">
+                    {CATEGORIES.map((cat) => {
+                      const checks = getCategoryChecks(cat, result);
+                      const { score: catScore } = scoreChecks(checks);
+                      return <CategoryBar key={cat.id} cat={cat} score={catScore} />;
                     })}
                   </div>
                 </div>
-                <div className="p-4 space-y-2">
-                  {result.endpoints.map((ep) => (
-                    <EndpointCard key={`${ep.method}:${ep.path}`} ep={ep} />
-                  ))}
-                </div>
-                {result.totalEndpoints > result.endpoints.length && (
-                  <div className="px-4 pb-4">
-                    <p className="text-xs text-zinc-400 dark:text-zinc-600 text-center">
-                      {result.totalEndpoints - result.endpoints.length} more endpoints in spec — showing first {result.endpoints.length}
-                    </p>
-                  </div>
-                )}
               </div>
-            )}
+            </div>
+
+            {/* Category sections */}
+            {CATEGORIES.map((cat) => (
+              <CategorySection key={cat.id} cat={cat} result={result} />
+            ))}
 
             {/* Footer */}
-            <div className="flex items-center justify-between flex-wrap gap-3 px-1">
-              <p className="text-xs text-zinc-400 dark:text-zinc-600">
+            <div className="flex items-center justify-between flex-wrap gap-3 px-1 text-xs text-zinc-400">
+              <span>
                 Tested {new Date(result.testedAt).toLocaleString()} ·{" "}
                 <a href="https://mpp.dev/advanced/discovery" target="_blank" rel="noopener noreferrer" className="text-violet-500 hover:underline">
                   MPP discovery spec ↗
                 </a>
-              </p>
+              </span>
               <button
                 onClick={copyPrompt}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/40 transition"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/40 transition"
               >
-                {promptCopied ? <>✓ Copied!</> : <>✦ Copy doctor prompt</>}
+                {promptCopied ? "✓ Copied!" : "✦ Copy doctor prompt"}
               </button>
-            </div>
-
-            {/* Doctor prompt */}
-            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-sm">
-              <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
-                <div>
-                  <h3 className="font-semibold text-sm">Doctor prompt</h3>
-                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                    Give this to Claude to run live x402 payment tests
-                  </p>
-                </div>
-                <button
-                  onClick={copyPrompt}
-                  className="text-xs px-2.5 py-1 rounded-md bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition text-zinc-600 dark:text-zinc-300"
-                >
-                  {promptCopied ? "Copied!" : "Copy"}
-                </button>
-              </div>
-              <pre className="text-xs text-zinc-600 dark:text-zinc-400 p-4 overflow-auto max-h-72 whitespace-pre-wrap leading-relaxed">
-                {doctorPrompt(result.url, result.endpoints)}
-              </pre>
             </div>
           </div>
         )}
 
         {/* Empty state */}
         {!result && !loading && (
-          <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-5 shadow-sm">
-            <h3 className="font-semibold text-sm mb-3">What gets checked</h3>
-            <div className="space-y-4 text-sm text-zinc-600 dark:text-zinc-400">
-              <div>
-                <p className="font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">Discovery</p>
-                <ul className="space-y-1.5 pl-3">
-                  {[
-                    ["openapi.json", "MPP discovery document — used to find API endpoints"],
-                    ["llms.txt", "AI context file so agents understand your service"],
-                    [".well-known/agent-card.json", "Agent identity card for M2M discovery"],
-                    ["CORS headers", "Cross-origin access for browser-based agents"],
-                  ].map(([label, desc]) => (
-                    <li key={label} className="flex items-start gap-2">
-                      <span className="text-violet-400 shrink-0">›</span>
-                      <span><span className="font-medium text-zinc-700 dark:text-zinc-300">{label}</span> — {desc}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div>
-                <p className="font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">Per endpoint (parsed from openapi.json)</p>
-                <ul className="space-y-1.5 pl-3">
-                  {[
-                    ["402 without payment", "Unauthenticated request must return 402"],
-                    ["x402 payment details", "X-Payment-Required header with PaymentPayload JSON"],
-                    ["Mainnet USDC", "USDC accepted; warns if testnet PathUSD tokens are also offered"],
-                  ].map(([label, desc]) => (
-                    <li key={label} className="flex items-start gap-2">
-                      <span className="text-violet-400 shrink-0">›</span>
-                      <span><span className="font-medium text-zinc-700 dark:text-zinc-300">{label}</span> — {desc}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+          <div className="max-w-xl mx-auto">
+            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm divide-y divide-zinc-100 dark:divide-zinc-800">
+              {[
+                {
+                  id: "discovery",
+                  label: "Discovery",
+                  weight: "33%",
+                  color: "bg-violet-500",
+                  items: ["openapi.json with x-payment-info", "llms.txt for AI context", ".well-known/agent-card.json", "CORS headers"],
+                },
+                {
+                  id: "protocol",
+                  label: "Protocol",
+                  weight: "50%",
+                  color: "bg-violet-600",
+                  items: ["HTTP 402 without payment (per endpoint)", "X-Payment-Required header & payload", "Mainnet USDC accepted / testnet warnings"],
+                },
+                {
+                  id: "accessibility",
+                  label: "Accessibility",
+                  weight: "17%",
+                  color: "bg-violet-400",
+                  items: ["Cross-origin access for browser agents"],
+                },
+              ].map((cat) => (
+                <div key={cat.id} className="px-5 py-4 flex items-start gap-4">
+                  <div className={`w-1 self-stretch rounded-full shrink-0 ${cat.color}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="font-semibold text-sm">{cat.label}</span>
+                      <span className="text-xs text-zinc-400 bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded">{cat.weight}</span>
+                    </div>
+                    <ul className="space-y-1">
+                      {cat.items.map((item) => (
+                        <li key={item} className="text-xs text-zinc-500 dark:text-zinc-400 flex items-start gap-1.5">
+                          <span className="text-zinc-300 dark:text-zinc-600 shrink-0 mt-0.5">›</span>
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              ))}
             </div>
-            <p className="mt-4 text-xs text-zinc-400 dark:text-zinc-600">
-              <a href="https://mpp.dev/advanced/discovery" target="_blank" rel="noopener noreferrer" className="text-violet-500 hover:underline">MPP discovery spec ↗</a>
-            </p>
           </div>
         )}
       </div>
-    </main>
+    </div>
   );
 }
