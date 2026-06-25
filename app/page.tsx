@@ -325,6 +325,7 @@ export default function Home() {
               {[
                 ["Returns HTTP 402 without payment", "Core MPP requirement — unauthenticated requests must return 402"],
                 ["x402 payment details on 402", "X-Payment-Required header with base64 PaymentPayload JSON"],
+                ["Payment assets (mainnet USDC)", "Checks whether mainnet USDC is accepted; warns if testnet PathUSD tokens are also offered"],
                 ["openapi.json", "MPP discovery document with x-payment-info extension"],
                 ["llms.txt", "AI context file so agents understand your service"],
                 [".well-known/agent-card.json", "Agent identity card for machine-to-machine discovery"],

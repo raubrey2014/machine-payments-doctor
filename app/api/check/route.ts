@@ -64,98 +64,184 @@ export async function POST(req: NextRequest) {
   const base = baseUrl(targetUrl);
   const checks: CheckResult[] = [];
 
+  // Known asset addresses (lowercase for comparison)
+  const USDC_MAINNET = "0x20c000000000000000000000b9537d11c60e8b50";
+  const TESTNET_ASSETS = new Set([
+    "0x20c0000000000000000000000000000000000000",
+    "0x20c0000000000000000000000000000000000001",
+    "0x20c0000000000000000000000000000000000002",
+    "0x20c0000000000000000000000000000000000003",
+  ]);
+
+  function decodePaymentRequired(header: string): unknown {
+    try {
+      return JSON.parse(Buffer.from(header, "base64").toString("utf-8"));
+    } catch {
+      try { return JSON.parse(header); } catch { return null; }
+    }
+  }
+
+  function extractAssets(decoded: unknown): string[] {
+    if (!decoded || typeof decoded !== "object") return [];
+    // The payload is an array of PaymentRequirement objects, each with an `asset` field
+    const arr = Array.isArray(decoded) ? decoded : [decoded];
+    return arr.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const e = entry as Record<string, unknown>;
+      // Top-level asset
+      const assets: string[] = [];
+      if (typeof e.asset === "string") assets.push(e.asset.toLowerCase());
+      // Some implementations nest under `accepts`
+      if (Array.isArray(e.accepts)) {
+        for (const a of e.accepts) {
+          if (a && typeof a === "object" && typeof (a as Record<string, unknown>).asset === "string") {
+            assets.push(((a as Record<string, unknown>).asset as string).toLowerCase());
+          }
+        }
+      }
+      return assets;
+    });
+  }
+
+  // Fetch 402 response once and reuse
+  const { res: initialRes, error: initialError } = await safeFetch(targetUrl, { method: "GET" });
+
   // ── Check 1: Returns 402 without payment ──────────────────────────────────
-  {
-    const { res, error } = await safeFetch(targetUrl, { method: "GET" });
-    if (error || !res) {
+  if (initialError || !initialRes) {
+    checks.push({
+      id: "402_without_payment",
+      label: "Returns 402 without payment",
+      status: "fail",
+      detail: initialError ?? "No response",
+    });
+  } else if (initialRes.status === 402) {
+    checks.push({
+      id: "402_without_payment",
+      label: "Returns 402 without payment",
+      status: "pass",
+      detail: "Got 402 Payment Required",
+    });
+  } else {
+    checks.push({
+      id: "402_without_payment",
+      label: "Returns 402 without payment",
+      status: "fail",
+      detail: `Expected 402 but got ${initialRes.status}`,
+    });
+  }
+
+  // ── Check 2: x402 payment details present on 402 ─────────────────────────
+  let decodedPayload: unknown = null;
+
+  if (!initialRes || initialRes.status !== 402) {
+    checks.push({
+      id: "x402_header",
+      label: "x402 payment details on 402 response",
+      status: "skip",
+      detail: "Skipped — endpoint did not return 402",
+    });
+  } else {
+    const xPaymentRequired =
+      initialRes.headers.get("x-payment-required") ??
+      initialRes.headers.get("payment-required") ??
+      "";
+    const wwwAuth = initialRes.headers.get("www-authenticate") ?? "";
+
+    if (xPaymentRequired) {
+      decodedPayload = decodePaymentRequired(xPaymentRequired);
       checks.push({
-        id: "402_without_payment",
-        label: "Returns 402 without payment",
-        status: "fail",
-        detail: error ?? "No response",
-      });
-    } else if (res.status === 402) {
-      checks.push({
-        id: "402_without_payment",
-        label: "Returns 402 without payment",
+        id: "x402_header",
+        label: "x402 payment details on 402 response",
         status: "pass",
-        detail: "Got 402 Payment Required",
+        detail: decodedPayload
+          ? "X-Payment-Required header present with valid JSON payload"
+          : "X-Payment-Required header present (could not decode payload)",
+        data: decodedPayload ?? undefined,
+      });
+    } else if (wwwAuth) {
+      checks.push({
+        id: "x402_header",
+        label: "x402 payment details on 402 response",
+        status: "warn",
+        detail: `WWW-Authenticate header found but not x402 format. Found: ${wwwAuth.slice(0, 100)}`,
       });
     } else {
+      let bodyData: unknown = null;
+      try {
+        const text = await initialRes.clone().text();
+        bodyData = JSON.parse(text);
+      } catch { /* not JSON */ }
+      const bodyHasPayment =
+        bodyData !== null &&
+        typeof bodyData === "object" &&
+        ("accepts" in (bodyData as object) || "paymentRequired" in (bodyData as object));
+      if (bodyHasPayment) decodedPayload = bodyData;
       checks.push({
-        id: "402_without_payment",
-        label: "Returns 402 without payment",
-        status: "fail",
-        detail: `Expected 402 but got ${res.status}`,
+        id: "x402_header",
+        label: "x402 payment details on 402 response",
+        status: "warn",
+        detail: bodyHasPayment
+          ? "Payment details found in body but not in X-Payment-Required header — prefer the header"
+          : "No X-Payment-Required header on 402. Add payment details so agents know how to pay.",
+        data: bodyHasPayment ? bodyData : undefined,
       });
     }
   }
 
-  // ── Check 2: x402 payment details present on 402 ─────────────────────────
+  // ── Check 3: Accepted assets — mainnet USDC + testnet detection ───────────
   {
-    const { res } = await safeFetch(targetUrl, { method: "GET" });
-    if (!res || res.status !== 402) {
+    if (!initialRes || initialRes.status !== 402 || decodedPayload === null) {
       checks.push({
-        id: "x402_header",
-        label: "x402 payment details on 402 response",
+        id: "payment_assets",
+        label: "Payment assets (mainnet USDC)",
         status: "skip",
-        detail: "Skipped — endpoint did not return 402",
+        detail: "Skipped — no x402 payment payload to inspect",
       });
     } else {
-      const xPaymentRequired =
-        res.headers.get("x-payment-required") ??
-        res.headers.get("payment-required") ??
-        "";
-      const wwwAuth = res.headers.get("www-authenticate") ?? "";
+      const assets = extractAssets(decodedPayload);
+      const hasUsdcMainnet = assets.includes(USDC_MAINNET);
+      const testnetFound = assets.filter((a) => TESTNET_ASSETS.has(a));
+      const unknownAssets = assets.filter((a) => a !== USDC_MAINNET && !TESTNET_ASSETS.has(a));
 
-      if (xPaymentRequired) {
-        let decoded: unknown = null;
-        try {
-          decoded = JSON.parse(Buffer.from(xPaymentRequired, "base64").toString("utf-8"));
-        } catch {
-          try { decoded = JSON.parse(xPaymentRequired); } catch { /* leave null */ }
-        }
+      if (assets.length === 0) {
         checks.push({
-          id: "x402_header",
-          label: "x402 payment details on 402 response",
-          status: "pass",
-          detail: decoded
-            ? "X-Payment-Required header present with valid JSON payload"
-            : "X-Payment-Required header present (could not decode payload)",
-          data: decoded ?? undefined,
-        });
-      } else if (wwwAuth) {
-        checks.push({
-          id: "x402_header",
-          label: "x402 payment details on 402 response",
+          id: "payment_assets",
+          label: "Payment assets (mainnet USDC)",
           status: "warn",
-          detail: `WWW-Authenticate header found but not x402 format. Found: ${wwwAuth.slice(0, 100)}`,
+          detail: "No asset addresses found in the payment payload",
+        });
+      } else if (!hasUsdcMainnet) {
+        const parts: string[] = [];
+        if (testnetFound.length > 0) parts.push(`testnet PathUSD (${testnetFound.join(", ")})`);
+        if (unknownAssets.length > 0) parts.push(`unknown assets (${unknownAssets.join(", ")})`);
+        checks.push({
+          id: "payment_assets",
+          label: "Payment assets (mainnet USDC)",
+          status: "fail",
+          detail: `Mainnet USDC (${USDC_MAINNET}) not offered. Found: ${parts.join("; ") || assets.join(", ")}`,
         });
       } else {
-        // Check body for payment info
-        let bodyData: unknown = null;
-        try {
-          const text = await res.clone().text();
-          bodyData = JSON.parse(text);
-        } catch { /* not JSON */ }
-        const bodyHasPayment =
-          bodyData !== null &&
-          typeof bodyData === "object" &&
-          ("accepts" in (bodyData as object) || "paymentRequired" in (bodyData as object));
-        checks.push({
-          id: "x402_header",
-          label: "x402 payment details on 402 response",
-          status: "warn",
-          detail: bodyHasPayment
-            ? "Payment details found in body but not in X-Payment-Required header — prefer the header"
-            : "No X-Payment-Required header on 402. Add payment details so agents know how to pay.",
-          data: bodyHasPayment ? bodyData : undefined,
-        });
+        // Has USDC mainnet — check if testnet tokens are also present
+        if (testnetFound.length > 0) {
+          checks.push({
+            id: "payment_assets",
+            label: "Payment assets (mainnet USDC)",
+            status: "warn",
+            detail: `Mainnet USDC offered ✓, but testnet PathUSD tokens are also accepted (${testnetFound.join(", ")}). Testnet tokens are useful for testing but can confuse agents in production — consider serving USDC only.`,
+          });
+        } else {
+          checks.push({
+            id: "payment_assets",
+            label: "Payment assets (mainnet USDC)",
+            status: "pass",
+            detail: `Mainnet USDC accepted (${USDC_MAINNET})${unknownAssets.length > 0 ? ` · also accepts: ${unknownAssets.join(", ")}` : ""}`,
+          });
+        }
       }
     }
   }
 
-  // ── Check 3: openapi.json ─────────────────────────────────────────────────
+  // ── Check 4: openapi.json ─────────────────────────────────────────────────
   {
     const openapiUrl = resolveUrl(base, "openapi.json");
     const { res, error } = await safeFetch(openapiUrl);
@@ -205,7 +291,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── Check 4: llms.txt ────────────────────────────────────────────────────
+  // ── Check 5: llms.txt ────────────────────────────────────────────────────
   {
     const llmsUrl = resolveUrl(base, "llms.txt");
     const { res, error } = await safeFetch(llmsUrl);
@@ -235,7 +321,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── Check 5: .well-known/agent-card.json ─────────────────────────────────
+  // ── Check 6: .well-known/agent-card.json ─────────────────────────────────
   {
     // Try both with and without .json extension
     const candidates = [
@@ -289,7 +375,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── Check 6: CORS headers ─────────────────────────────────────────────────
+  // ── Check 7: CORS headers ─────────────────────────────────────────────────
   {
     const { res, error } = await safeFetch(targetUrl, {
       method: "OPTIONS",
