@@ -236,20 +236,79 @@ function CategoryBar({ label, weight, score }: { label: string; weight: number; 
   );
 }
 
-function doctorPrompt(url: string, endpoints: EndpointResult[]) {
-  const list = endpoints.slice(0, 3).map((e) => `  - ${e.method} ${e.fullUrl}${e.summary ? ` (${e.summary})` : ""}`).join("\n");
-  return `You are testing x402-compliant API endpoints for Machine Payments Protocol (MPP) compliance.
+function buildDoctorPrompt(result: CheckResponse): string {
+  const overall = overallScore(result);
+  const hostname = (() => { try { return new URL(result.url).hostname; } catch { return result.url; } })();
+  const endpointList = result.endpoints.slice(0, 4)
+    .map((e) => `  - ${e.method} ${e.fullUrl}${e.summary ? ` (${e.summary})` : ""}`)
+    .join("\n");
 
-Base URL: ${url}
+  // Collect failing/warning checks across base and endpoints
+  const issues: string[] = [];
 
-Discovered endpoints:
-${list || `  - GET ${url}`}
+  // Base check issues
+  for (const c of result.baseChecks) {
+    if (c.status === "fail") {
+      if (c.id === "openapi_json") issues.push(`• No openapi.json found at ${result.url.replace(/\/$/, "")}/openapi.json\n  Fix: Expose a valid OpenAPI 3.1 spec with x-payment-info extensions on paid operations.`);
+      if (c.id === "llms_txt") issues.push(`• No llms.txt found\n  Fix: Add a plain-text file at /llms.txt describing what your API does and how to use it.`);
+      if (c.id === "agent_card") issues.push(`• No .well-known/agent-card.json found\n  Fix: Publish a JSON file at /.well-known/agent-card.json with at minimum { "name": "…", "url": "…" }.`);
+      if (c.id === "cors") issues.push(`• CORS headers missing\n  Fix: Return Access-Control-Allow-Origin: * and allow the X-Payment and X-Payment-Required headers.`);
+    } else if (c.status === "warn") {
+      if (c.id === "openapi_json") issues.push(`• openapi.json found but missing x-payment-info extension\n  Fix: Add x-payment-info to each paid operation listing accepted networks/assets/amounts.`);
+      if (c.id === "cors") issues.push(`• CORS configuration incomplete\n  Fix: ${c.detail}`);
+    }
+  }
 
-For each endpoint:
-1. Make a request without credentials → confirm HTTP 402
-2. Decode X-Payment-Required base64 JSON → show network, asset, amount, payTo
-3. Construct PaymentPayload for lowest-cost option → base64-encode it
-4. Retry with X-Payment header → confirm 2xx + show X-Payment-Response
+  // Endpoint-level issues (deduplicated by check id)
+  const seenEpIssues = new Set<string>();
+  for (const ep of result.endpoints) {
+    for (const c of ep.checks) {
+      if ((c.status === "fail" || c.status === "warn") && !seenEpIssues.has(c.id)) {
+        seenEpIssues.add(c.id);
+        if (c.id === "402" && c.status === "fail") {
+          issues.push(`• Endpoints not returning HTTP 402 without payment\n  Fix: Your middleware must intercept unauthenticated requests and respond 402 before fulfilling them.`);
+        }
+        if (c.id === "x402_header") {
+          issues.push(`• X-Payment-Required header missing or malformed on 402 responses\n  Fix: On every 402, set X-Payment-Required to a base64-encoded JSON PaymentRequired object with an "accepts" array (see https://x402.org).`);
+        }
+        if (c.id === "payment_assets") {
+          if (c.status === "fail") issues.push(`• Payment payload doesn't include mainnet USDC\n  Fix: ${c.detail}\n  Add USDC on Base (eip155:8453 / 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913) or Solana (EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v).`);
+          if (c.status === "warn") issues.push(`• Testnet tokens included in production payment payload\n  Fix: ${c.detail}`);
+        }
+      }
+    }
+  }
+
+  const issueSection = issues.length > 0
+    ? `\n## Issues found (score: ${overall}/100)\n\n${issues.join("\n\n")}`
+    : `\n## This service scored ${overall}/100 — no major issues found.`;
+
+  return `# Machine Payments Doctor — ${hostname}
+${issueSection}
+
+## Live payment test
+
+Base URL: ${result.url}
+
+Endpoints to test:
+${endpointList || `  - GET ${result.url}`}
+
+For each endpoint above:
+
+1. Make a ${result.endpoints[0]?.method ?? "GET"} request with no credentials.
+   Confirm the response is HTTP 402.
+   Read and base64-decode the X-Payment-Required header.
+   Print the full "accepts" array — show network, asset, amount, payTo.
+
+2. Choose the USDC option (prefer Base or Solana).
+   Construct a PaymentPayload for that option.
+   Show the full JSON before encoding, then base64-encode it.
+
+3. Retry the request with header: X-Payment: <base64-payload>
+   Confirm the response is 2xx.
+   Print the X-Payment-Response header and the first 500 chars of the body.
+
+4. Summarise: which network was used, what the cost was, whether it succeeded.
 
 Reference: https://mpp.dev/advanced/discovery`.trim();
 }
@@ -293,7 +352,7 @@ export default function Home() {
 
   async function copyPrompt() {
     if (!result) return;
-    await navigator.clipboard.writeText(doctorPrompt(result.url, result.endpoints));
+    await navigator.clipboard.writeText(buildDoctorPrompt(result));
     setPromptCopied(true);
     setTimeout(() => setPromptCopied(false), 2000);
   }
@@ -395,18 +454,31 @@ export default function Home() {
           {/* Category sections */}
           {CATEGORIES.map((cat) => <CategorySection key={cat.id} cat={cat} result={result} />)}
 
+          {/* Doctor prompt card */}
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between gap-4">
+              <div>
+                <h3 className="font-semibold text-sm">Doctor prompt</h3>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Paste into Claude to run live x402 payment tests and get targeted fixes
+                </p>
+              </div>
+              <button
+                onClick={copyPrompt}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold transition shrink-0"
+              >
+                {promptCopied ? "✓ Copied!" : "Copy prompt"}
+              </button>
+            </div>
+            <pre className="text-xs text-zinc-600 dark:text-zinc-400 p-5 overflow-auto max-h-80 whitespace-pre-wrap leading-relaxed font-mono">
+              {buildDoctorPrompt(result)}
+            </pre>
+          </div>
+
           {/* Footer */}
-          <div className="flex items-center justify-between flex-wrap gap-3 px-1 text-xs text-zinc-400">
-            <span>
-              Tested {new Date(result.testedAt).toLocaleString()} ·{" "}
-              <a href="https://mpp.dev/advanced/discovery" target="_blank" rel="noopener noreferrer" className="text-violet-500 hover:underline">MPP discovery spec ↗</a>
-            </span>
-            <button
-              onClick={copyPrompt}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950/40 transition"
-            >
-              {promptCopied ? "✓ Copied!" : "✦ Copy doctor prompt"}
-            </button>
+          <div className="px-1 text-xs text-zinc-400">
+            Tested {new Date(result.testedAt).toLocaleString()} ·{" "}
+            <a href="https://mpp.dev/advanced/discovery" target="_blank" rel="noopener noreferrer" className="text-violet-500 hover:underline">MPP discovery spec ↗</a>
           </div>
         </section>
       )}
