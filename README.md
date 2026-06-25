@@ -1,36 +1,106 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Machine Payments Doctor
 
-## Getting Started
+Machine Payments Doctor checks whether an API is ready for machine payment clients. It inspects discovery files, finds OpenAPI operations that appear to require payment, probes unpaid requests for x402-style `402 Payment Required` responses, and returns fix-oriented results.
 
-First, run the development server:
+The first public API is inspect-only. It does not retry paid requests, load wallet keys, or run an MCP server.
+
+## Local Development
+
+Install dependencies and run the Next.js app:
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000` to use the UI.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The scanner can probe `localhost` targets while running locally. A hosted deployment can only check URLs reachable from that deployment.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+This repo uses Next 16. Before changing route handlers or app-router behavior, read the relevant local docs under `node_modules/next/dist/docs/`.
 
-## Learn More
+## Programmatic API
 
-To learn more about Next.js, take a look at the following resources:
+`POST /api/check` accepts JSON:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```json
+{ "url": "https://api.example.com" }
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The `url` must be an absolute `http:` or `https:` URL.
 
-## Deploy on Vercel
+Successful responses return `200` with:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```json
+{
+  "url": "https://api.example.com/",
+  "score": 84,
+  "grade": "B",
+  "categories": [
+    {
+      "id": "discovery",
+      "label": "Discovery",
+      "description": "Can agents find and understand your service?",
+      "weight": 0.33,
+      "score": 100,
+      "grade": "A"
+    }
+  ],
+  "issues": [
+    {
+      "id": "protocol.mainnet_usdc_missing",
+      "category": "protocol",
+      "severity": "error",
+      "title": "Payment payload does not include mainnet USDC",
+      "detail": "No mainnet USDC found...",
+      "fix": "Add USDC on Base or Solana.",
+      "checkId": "payment_assets",
+      "endpoint": {
+        "method": "GET",
+        "path": "/paid",
+        "fullUrl": "https://api.example.com/paid"
+      }
+    }
+  ],
+  "doctorPrompt": "# Machine Payments Doctor - api.example.com...",
+  "baseChecks": [],
+  "endpoints": [],
+  "totalEndpoints": 0,
+  "specTitle": "Example API",
+  "testedAt": "2026-06-25T00:00:00.000Z"
+}
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Error responses:
+
+```json
+{ "error": "Invalid JSON" }
+```
+
+```json
+{ "error": "url is required" }
+```
+
+```json
+{ "error": "Invalid URL" }
+```
+
+All errors above use HTTP `400`.
+
+## Validation
+
+Run:
+
+```bash
+npm run lint
+npm run build
+```
+
+Useful local API checks:
+
+```bash
+curl -i -X POST http://localhost:3000/api/check -H 'Content-Type: application/json' --data '{'
+curl -i -X POST http://localhost:3000/api/check -H 'Content-Type: application/json' --data '{}'
+curl -i -X POST http://localhost:3000/api/check -H 'Content-Type: application/json' --data '{"url":"ftp://example.com"}'
+curl -s -X POST http://localhost:3000/api/check -H 'Content-Type: application/json' --data '{"url":"https://api.example.com"}' | jq
+```

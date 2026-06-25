@@ -1,16 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import type { CheckResult, CheckStatus, EndpointResult, CheckResponse } from "../api/check/route";
-import {
-  CATEGORIES,
-  getCategoryChecks,
-  scoreChecks,
-  overallScore,
-  letterGrade,
-  gradeColors,
-  buildDoctorPrompt,
-} from "../lib/scoring";
+import type { CategoryId, CheckResponse, CheckResult, CheckStatus, EndpointResult } from "../lib/doctor-types";
+import { gradeColors } from "../lib/scoring";
 
 // ── Primitives ────────────────────────────────────────────────────────────────
 
@@ -100,24 +92,29 @@ export function EndpointRow({ ep }: { ep: EndpointResult }) {
 
 // ── Category section ──────────────────────────────────────────────────────────
 
-function CategorySection({ cat, result }: { cat: typeof CATEGORIES[number]; result: CheckResponse }) {
-  const checks = getCategoryChecks(cat, result);
-  const score = scoreChecks(checks);
-  const baseChecks = result.baseChecks.filter((c) => cat.baseIds.includes(c.id));
-  const hasEndpoints = cat.epIds.length > 0;
-  const { text, ring } = gradeColors(score);
+const CATEGORY_CHECK_IDS: Record<CategoryId, { baseIds: string[]; epIds: string[] }> = {
+  discovery: { baseIds: ["openapi_json", "llms_txt", "agent_card"], epIds: [] },
+  protocol: { baseIds: [], epIds: ["402", "x402_header", "payment_assets"] },
+  accessibility: { baseIds: ["cors"], epIds: [] },
+};
+
+function CategorySection({ category, result }: { category: CheckResponse["categories"][number]; result: CheckResponse }) {
+  const checkIds = CATEGORY_CHECK_IDS[category.id];
+  const baseChecks = result.baseChecks.filter((c) => checkIds.baseIds.includes(c.id));
+  const hasEndpoints = checkIds.epIds.length > 0;
+  const { text, ring } = gradeColors(category.score);
 
   return (
     <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden">
       <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between gap-4">
         <div>
-          <h3 className="font-semibold text-sm">{cat.label}</h3>
-          <p className="text-xs text-zinc-500 mt-0.5">{cat.description}</p>
+          <h3 className="font-semibold text-sm">{category.label}</h3>
+          <p className="text-xs text-zinc-500 mt-0.5">{category.description}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span className={`text-xl font-bold tabular-nums ${text}`}>{score}%</span>
+          <span className={`text-xl font-bold tabular-nums ${text}`}>{category.score}%</span>
           <span className={`font-bold text-sm px-2 py-0.5 rounded-full border ${ring} ${text}`}>
-            {letterGrade(score)}
+            {category.grade}
           </span>
         </div>
       </div>
@@ -141,19 +138,19 @@ function CategorySection({ cat, result }: { cat: typeof CATEGORIES[number]; resu
 
 // ── Score display ─────────────────────────────────────────────────────────────
 
-export function GradeCircle({ score }: { score: number }) {
+export function GradeCircle({ score, grade }: { score: number; grade: string }) {
   const { text, ring } = gradeColors(score);
   return (
     <div className={`w-24 h-24 rounded-full border-4 ${ring} flex flex-col items-center justify-center shrink-0`}>
-      <span className={`text-3xl font-bold leading-none ${text}`}>{letterGrade(score)}</span>
+      <span className={`text-3xl font-bold leading-none ${text}`}>{grade}</span>
       <span className="text-xs text-zinc-400 mt-0.5">{score}/100</span>
     </div>
   );
 }
 
 export function CategoryBar({
-  label, weight, score,
-}: { label: string; weight: number; score: number }) {
+  label, weight, score, grade,
+}: { label: string; weight: number; score: number; grade: string }) {
   const { text, ring, bar } = gradeColors(score);
   return (
     <div className="flex items-center gap-3">
@@ -169,7 +166,7 @@ export function CategoryBar({
       </div>
       <div className={`w-10 text-right text-sm font-semibold tabular-nums shrink-0 ${text}`}>{score}%</div>
       <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center text-xs font-bold shrink-0 ${ring} ${text}`}>
-        {letterGrade(score)}
+        {grade}
       </div>
     </div>
   );
@@ -179,10 +176,9 @@ export function CategoryBar({
 
 export function CheckResultsView({ result }: { result: CheckResponse }) {
   const [promptCopied, setPromptCopied] = useState(false);
-  const score = overallScore(result);
 
   async function copyPrompt() {
-    await navigator.clipboard.writeText(buildDoctorPrompt(result));
+    await navigator.clipboard.writeText(result.doctorPrompt);
     setPromptCopied(true);
     setTimeout(() => setPromptCopied(false), 2000);
   }
@@ -196,7 +192,7 @@ export function CheckResultsView({ result }: { result: CheckResponse }) {
       {/* Score card */}
       <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm p-6">
         <div className="flex items-start gap-6 flex-wrap">
-          <GradeCircle score={score} />
+          <GradeCircle score={result.score} grade={result.grade} />
           <div className="flex-1 min-w-0 space-y-4">
             <div>
               <h2 className="font-bold text-lg">{result.specTitle ?? hostname}</h2>
@@ -208,12 +204,13 @@ export function CheckResultsView({ result }: { result: CheckResponse }) {
               )}
             </div>
             <div className="space-y-3">
-              {CATEGORIES.map((cat) => (
+              {result.categories.map((category) => (
                 <CategoryBar
-                  key={cat.id}
-                  label={cat.label}
-                  weight={cat.weight}
-                  score={scoreChecks(getCategoryChecks(cat, result))}
+                  key={category.id}
+                  label={category.label}
+                  weight={category.weight}
+                  score={category.score}
+                  grade={category.grade}
                 />
               ))}
             </div>
@@ -222,8 +219,8 @@ export function CheckResultsView({ result }: { result: CheckResponse }) {
       </div>
 
       {/* Category sections */}
-      {CATEGORIES.map((cat) => (
-        <CategorySection key={cat.id} cat={cat} result={result} />
+      {result.categories.map((category) => (
+        <CategorySection key={category.id} category={category} result={result} />
       ))}
 
       {/* Doctor prompt card */}
@@ -243,7 +240,7 @@ export function CheckResultsView({ result }: { result: CheckResponse }) {
           </button>
         </div>
         <pre className="text-xs text-zinc-600 dark:text-zinc-400 p-5 overflow-auto max-h-80 whitespace-pre-wrap leading-relaxed font-mono">
-          {buildDoctorPrompt(result)}
+          {result.doctorPrompt}
         </pre>
       </div>
 
