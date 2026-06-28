@@ -243,8 +243,8 @@ export default function Home() {
                 color: "border-violet-400 dark:border-violet-600",
                 accent: "text-violet-700 dark:text-violet-300",
                 dot: "bg-violet-600",
-                desc: "Does the x402 payment flow work correctly across your endpoints?",
-                checks: ["HTTP 402 without credentials", "X-Payment-Required header & payload", "Mainnet USDC accepted"],
+                desc: "Does the payment challenge work correctly across your endpoints?",
+                checks: ["HTTP 402 without credentials", "MPP (WWW-Authenticate: Payment)", "x402 (PAYMENT-REQUIRED header)", "Mainnet USDC accepted"],
               },
               {
                 label: "Accessibility", weight: "17%",

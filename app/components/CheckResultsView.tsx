@@ -94,7 +94,7 @@ export function EndpointRow({ ep }: { ep: EndpointResult }) {
 
 const CATEGORY_CHECK_IDS: Record<CategoryId, { baseIds: string[]; epIds: string[] }> = {
   discovery: { baseIds: ["openapi_json", "llms_txt", "agent_card"], epIds: [] },
-  protocol: { baseIds: [], epIds: ["402", "x402_header", "payment_assets"] },
+  protocol: { baseIds: [], epIds: ["402", "mpp_challenge", "x402_challenge", "payment_assets"] },
   accessibility: { baseIds: ["cors"], epIds: [] },
 };
 

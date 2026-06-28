@@ -21,10 +21,10 @@ export const CATEGORIES = [
   {
     id: "protocol",
     label: "Protocol",
-    description: "Does the x402 payment flow work correctly?",
+    description: "Does the payment challenge work correctly?",
     weight: 0.5,
     baseIds: [] as string[],
-    epIds: ["402", "x402_header", "payment_assets"] as string[],
+    epIds: ["402", "mpp_challenge", "x402_challenge", "payment_assets"] as string[],
   },
   {
     id: "accessibility",
@@ -228,15 +228,30 @@ export function buildIssues(result: DoctorScanResult): DoctorIssue[] {
           endpoint,
         }));
       }
-      if (check.id === "x402_header") {
+      if (check.id === "mpp_challenge" && check.status === "warn") {
         seenEndpointIssues.add(seenKey);
         issues.push(issueFromCheck({
-          id: "protocol.payment_required_header",
+          id: "protocol.mpp_challenge_malformed",
+          category: "protocol",
+          severity: "warning",
+          title: "WWW-Authenticate: Payment header malformed",
+          detail: check.detail,
+          fix: "On every 402, set WWW-Authenticate to a valid MPP Payment challenge: 'Payment id=\"...\", realm=\"...\", method=\"...\", intent=\"...\", request=\"<base64url>\"'.",
+          check,
+          endpoint,
+        }));
+      }
+      if (check.id === "x402_challenge") {
+        seenEndpointIssues.add(seenKey);
+        issues.push(issueFromCheck({
+          id: "protocol.x402_challenge_missing_or_malformed",
           category: "protocol",
           severity: check.status === "fail" ? "error" : "warning",
-          title: "X-Payment-Required header missing or malformed",
+          title: check.detail.includes("failed schema")
+            ? "PAYMENT-REQUIRED header schema invalid"
+            : "PAYMENT-REQUIRED header missing",
           detail: check.detail,
-          fix: 'On every 402, set X-Payment-Required to a base64-encoded JSON PaymentRequired object with an "accepts" array.',
+          fix: "On every 402, set PAYMENT-REQUIRED to a base64-encoded x402 v2 PaymentRequired JSON object with an \"accepts\" array.",
           check,
           endpoint,
         }));
@@ -285,6 +300,8 @@ export function buildDoctorPrompt(result: CheckResponse): string {
       : `\n## This service scored ${result.score}/100 - no major issues found.`;
 
   return `# Machine Payments Doctor - ${hostname}
+
+This is a set of improvements to make your machine payments integration more standard, powered by https://machine-payments-doctor.vercel.app/; you can see your results at https://machine-payments-doctor.vercel.app/eval/${hostname}
 ${issueSection}
 
 ## Live payment test

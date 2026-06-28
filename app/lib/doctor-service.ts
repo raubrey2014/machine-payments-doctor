@@ -1,3 +1,5 @@
+import { Challenge } from "mppx";
+import * as x402 from "mppx/x402";
 import { analyzeDoctorCheck } from "./doctor-analysis";
 import type { CheckResponse, CheckResult, CheckStatus, DoctorScanResult, EndpointResult } from "./doctor-types";
 
@@ -86,7 +88,7 @@ interface AcceptedAsset {
   isTestnet: boolean;
 }
 
-function decodePaymentRequired(header: string): unknown {
+function rawDecodeBase64Json(header: string): unknown {
   try {
     return JSON.parse(Buffer.from(header, "base64").toString("utf-8"));
   } catch {
@@ -290,42 +292,94 @@ async function checkEndpoint(endpoint: DiscoveredEndpoint): Promise<EndpointResu
     return { ...endpoint, checks };
   }
 
-  // Check 2: x402 header
-  const xPaymentRequired =
-    res.headers.get("x-payment-required") ??
-    res.headers.get("payment-required") ??
-    "";
+  // Check 2: MPP payment challenge (WWW-Authenticate: Payment ...)
   const wwwAuth = res.headers.get("www-authenticate") ?? "";
-  let decodedPayload: unknown = null;
-
-  if (xPaymentRequired) {
-    decodedPayload = decodePaymentRequired(xPaymentRequired);
-    checks.push({
-      id: "x402_header",
-      label: "x402 payment details",
-      status: decodedPayload ? "pass" : "warn",
-      detail: decodedPayload
-        ? "X-Payment-Required header with valid JSON payload"
-        : "X-Payment-Required header present (could not decode payload)",
-      data: decodedPayload ?? undefined,
-    });
-  } else if (wwwAuth) {
-    checks.push({
-      id: "x402_header",
-      label: "x402 payment details",
-      status: "warn",
-      detail: `WWW-Authenticate found but not x402 format: ${wwwAuth.slice(0, 80)}`,
-    });
+  if (wwwAuth) {
+    if (/^Payment\s/i.test(wwwAuth)) {
+      try {
+        const challenges = Challenge.deserializeList(wwwAuth);
+        if (challenges.length > 0) {
+          const c = challenges[0];
+          const methods = [...new Set(challenges.map((ch) => ch.method))].join(", ");
+          checks.push({
+            id: "mpp_challenge",
+            label: "MPP payment challenge",
+            status: "pass",
+            detail: `method=${methods}, realm="${c.realm}", intent="${c.intent}"`,
+            data: challenges.length === 1 ? c : challenges,
+          });
+        } else {
+          checks.push({
+            id: "mpp_challenge",
+            label: "MPP payment challenge",
+            status: "warn",
+            detail: "WWW-Authenticate: Payment header found but no challenges parsed",
+          });
+        }
+      } catch (e) {
+        checks.push({
+          id: "mpp_challenge",
+          label: "MPP payment challenge",
+          status: "warn",
+          detail: `WWW-Authenticate: Payment header invalid: ${(e instanceof Error ? e.message : String(e)).slice(0, 100)}`,
+        });
+      }
+    } else {
+      checks.push({
+        id: "mpp_challenge",
+        label: "MPP payment challenge",
+        status: "skip",
+        detail: "WWW-Authenticate present but not MPP Payment scheme",
+      });
+    }
   } else {
     checks.push({
-      id: "x402_header",
-      label: "x402 payment details",
-      status: "warn",
-      detail: "No X-Payment-Required header on 402 — agents won't know how to pay",
+      id: "mpp_challenge",
+      label: "MPP payment challenge",
+      status: "skip",
+      detail: "No WWW-Authenticate: Payment header",
     });
   }
 
-  // Check 3: accepted assets — mainnet USDC + network names + testnet detection
+  // Check 3: x402 payment challenge (PAYMENT-REQUIRED or X-Payment-Required)
+  const paymentRequiredRaw =
+    res.headers.get("payment-required") ??
+    res.headers.get("x-payment-required") ??
+    "";
+  const paymentSignaturePresent = !!(res.headers.get("payment-signature") ?? res.headers.get("x-payment"));
+  let decodedPayload: unknown = null;
+
+  if (paymentRequiredRaw) {
+    let schemaError: string | null = null;
+    let x402Decoded: unknown = null;
+    try {
+      x402Decoded = x402.Header.decodePaymentRequired(paymentRequiredRaw);
+      decodedPayload = x402Decoded;
+    } catch (e) {
+      schemaError = e instanceof Error ? e.message : String(e);
+      decodedPayload = rawDecodeBase64Json(paymentRequiredRaw);
+    }
+    const headerName = res.headers.get("payment-required") ? "PAYMENT-REQUIRED" : "X-Payment-Required";
+    checks.push({
+      id: "x402_challenge",
+      label: "x402 payment challenge",
+      status: schemaError ? "warn" : "pass",
+      detail: schemaError
+        ? `${headerName} header present but failed schema validation: ${schemaError.slice(0, 100)}`
+        : `${headerName} with valid x402 v${(x402Decoded as { x402Version?: number })?.x402Version ?? "?"} payload`,
+      data: x402Decoded ?? undefined,
+    });
+  } else {
+    const hint = paymentSignaturePresent ? " (PAYMENT-SIGNATURE or X-Payment header found — may indicate partial x402 support)" : "";
+    checks.push({
+      id: "x402_challenge",
+      label: "x402 payment challenge",
+      status: "warn",
+      detail: `No PAYMENT-REQUIRED or X-Payment-Required header on 402${hint}`,
+    });
+  }
+
+  // Check 4: accepted assets — mainnet USDC + network names + testnet detection
   if (decodedPayload !== null) {
     const assets = extractAcceptedAssets(decodedPayload);
 
