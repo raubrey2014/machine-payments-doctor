@@ -221,6 +221,68 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Supported chains */}
+      <section className="border-t border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
+        <div className="max-w-5xl mx-auto px-6 py-20">
+          <div className="text-center mb-12">
+            <p className="text-xs font-semibold uppercase tracking-widest text-violet-500 mb-3">Supported payment methods</p>
+            <h2 className="text-3xl font-bold tracking-tight">Chains supported via Stripe</h2>
+            <p className="mt-4 text-zinc-500 dark:text-zinc-400 max-w-2xl mx-auto leading-relaxed">
+              Machine payments use USDC as the settlement currency. The doctor checks that your integration correctly advertises which networks you accept. All three chains below are supported through Stripe's payment infrastructure.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+            {[
+              {
+                name: "Base",
+                tag: "eip155:8453",
+                desc: "Ethereum L2 by Coinbase. The most common network for machine payments — fast finality, low fees, and native USDC support.",
+                asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+                color: "border-blue-200 dark:border-blue-900",
+                dot: "bg-blue-500",
+                accent: "text-blue-600 dark:text-blue-400",
+                badge: "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300",
+              },
+              {
+                name: "Solana",
+                tag: "solana:mainnet",
+                desc: "High-throughput L1 with sub-second confirmation times. Native USDC via Circle, widely used in autonomous agent transactions.",
+                asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                color: "border-violet-200 dark:border-violet-900",
+                dot: "bg-violet-500",
+                accent: "text-violet-600 dark:text-violet-400",
+                badge: "bg-violet-50 dark:bg-violet-950/40 text-violet-600 dark:text-violet-300",
+              },
+              {
+                name: "Tempo",
+                tag: "MPP method",
+                desc: "EVM-compatible network built for machine payments. Uses the MPP protocol natively with USDC as the payment currency.",
+                asset: "0x20c0...b9537d11c60e8b50",
+                color: "border-emerald-200 dark:border-emerald-900",
+                dot: "bg-emerald-500",
+                accent: "text-emerald-600 dark:text-emerald-400",
+                badge: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-300",
+              },
+            ].map((chain) => (
+              <div key={chain.name} className={`rounded-2xl border-2 ${chain.color} p-6 space-y-3 bg-white dark:bg-zinc-900`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2.5 h-2.5 rounded-full ${chain.dot}`} />
+                    <span className="font-bold text-sm">{chain.name}</span>
+                  </div>
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${chain.badge}`}>{chain.tag}</span>
+                </div>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">{chain.desc}</p>
+                <div className="pt-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">USDC contract</p>
+                  <code className="text-[10px] font-mono text-zinc-500 dark:text-zinc-400 break-all">{chain.asset}</code>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* Three pillars */}
       <section className="border-t border-zinc-100 dark:border-zinc-800">
         <div className="max-w-5xl mx-auto px-6 py-20">
