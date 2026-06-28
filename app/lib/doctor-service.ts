@@ -160,11 +160,29 @@ function extractAcceptedAssets(decoded: unknown): AcceptedAsset[] {
 
 // ── OpenAPI types ─────────────────────────────────────────────────────────────
 
+interface OasSchema {
+  type?: string;
+  format?: string;
+  pattern?: string;
+  enum?: unknown[];
+  example?: unknown;
+  default?: unknown;
+}
+
+interface OasParameter {
+  name: string;
+  in: "path" | "query" | "header" | "cookie";
+  required?: boolean;
+  schema?: OasSchema;
+  example?: unknown;
+}
+
 interface OasOperation {
   summary?: string;
   tags?: string[];
   responses?: Record<string, unknown>;
   "x-payment-info"?: unknown;
+  parameters?: OasParameter[];
 }
 
 interface OasPathItem {
@@ -173,6 +191,7 @@ interface OasPathItem {
   put?: OasOperation;
   delete?: OasOperation;
   patch?: OasOperation;
+  parameters?: OasParameter[];
 }
 
 interface OasSpec {
@@ -191,6 +210,128 @@ interface DiscoveredEndpoint {
   summary?: string;
   fullUrl: string;
   tags?: string[];
+  pathParams?: OasParameter[];
+}
+
+// ── Path parameter substitution ───────────────────────────────────────────────
+
+// Walks a regex pattern and produces a minimal matching string for common cases.
+// Handles \d{N}, [cls]{N}, literals, and optional chars (X?).
+function tryExampleFromPattern(pattern: string): string | null {
+  const p = pattern.replace(/^\^/, "").replace(/\$$/, "");
+  let result = "";
+  let i = 0;
+
+  const readQuantifier = (s: string, pos: number): { min: number; consumed: number } => {
+    if (pos >= s.length) return { min: 1, consumed: 0 };
+    if (s[pos] === "?") return { min: 0, consumed: 1 };
+    if (s[pos] === "*") return { min: 0, consumed: 1 };
+    if (s[pos] === "+") return { min: 1, consumed: 1 };
+    if (s[pos] === "{") {
+      const close = s.indexOf("}", pos);
+      if (close === -1) return { min: 1, consumed: 0 };
+      const min = parseInt(s.slice(pos + 1, close).split(",")[0]) || 1;
+      return { min, consumed: close - pos + 1 };
+    }
+    return { min: 1, consumed: 0 };
+  };
+
+  while (i < p.length) {
+    if (p[i] === "\\") {
+      i++;
+      const ch = p[i++];
+      const q = readQuantifier(p, i);
+      i += q.consumed;
+      const rep = q.min === 0 ? 0 : q.min;
+      if (ch === "d") result += "1".repeat(rep);
+      else if (ch === "w") result += "a".repeat(rep);
+      else if (ch === "s") result += " ".repeat(Math.max(rep, 0));
+      else result += ch.repeat(rep === 0 ? 0 : 1);
+    } else if (p[i] === "[") {
+      const close = p.indexOf("]", i + 1);
+      if (close === -1) { i++; continue; }
+      const cls = p.slice(i + 1, close);
+      i = close + 1;
+      const q = readQuantifier(p, i);
+      i += q.consumed;
+      if (q.min === 0) continue;
+      const inner = cls.startsWith("^") ? cls.slice(1) : cls;
+      let sample = "a";
+      if (/\\d/.test(inner)) sample = "1";
+      else if (inner[0] && inner[0] !== "\\") sample = inner[0];
+      result += sample.repeat(q.min);
+    } else if (p[i] === "?") {
+      // Optional quantifier on last literal — remove it
+      result = result.slice(0, -1);
+      i++;
+    } else if (p[i] === "*" || p[i] === "+") {
+      i++;
+    } else if (p[i] === "(") {
+      // Skip groups entirely
+      let depth = 1;
+      i++;
+      while (i < p.length && depth > 0) {
+        if (p[i] === "(") depth++;
+        else if (p[i] === ")") depth--;
+        i++;
+      }
+      const q = readQuantifier(p, i);
+      i += q.consumed;
+    } else if (p[i] === ".") {
+      i++;
+      const q = readQuantifier(p, i);
+      i += q.consumed;
+      result += "a".repeat(q.min === 0 ? 0 : q.min);
+    } else {
+      result += p[i++];
+    }
+  }
+
+  return result || null;
+}
+
+function exampleForParam(param: OasParameter): string | null {
+  if (param.example !== undefined) return String(param.example);
+  const s = param.schema;
+  if (!s) return null;
+  if (s.example !== undefined) return String(s.example);
+  if (s.default !== undefined) return String(s.default);
+  if (s.enum && s.enum.length > 0) return String(s.enum[0]);
+  if (s.pattern) {
+    const v = tryExampleFromPattern(s.pattern);
+    if (v) return v;
+  }
+  switch (s.type) {
+    case "integer":
+    case "number": return "1";
+    case "boolean": return "true";
+    case "string":
+      switch (s.format) {
+        case "uuid": return "00000000-0000-0000-0000-000000000001";
+        case "email": return "user@example.com";
+        case "date": return "2024-01-01";
+        case "date-time": return "2024-01-01T00:00:00Z";
+        case "uri": return "https://example.com";
+        default: return null;
+      }
+    default: return null;
+  }
+}
+
+function substitutePathParams(url: string, params: OasParameter[]): { url: string; missing: string[] } {
+  const missing: string[] = [];
+  let result = url;
+  for (const match of [...url.matchAll(/\{([^}]+)\}/g)]) {
+    const name = match[1];
+    const param = params.find((p) => p.name === name && p.in === "path");
+    const value = param ? exampleForParam(param) : null;
+    if (value !== null) {
+      result = result.replace(`{${name}}`, encodeURIComponent(value));
+    } else {
+      missing.push(name);
+    }
+  }
+  return { url: result, missing };
 }
 
 function discoverEndpoints(spec: OasSpec, origin: string): DiscoveredEndpoint[] {
@@ -204,6 +345,8 @@ function discoverEndpoints(spec: OasSpec, origin: string): DiscoveredEndpoint[] 
   const nonPayment: DiscoveredEndpoint[] = [];
 
   for (const [path, pathItem] of Object.entries(paths)) {
+    const pathLevelParams: OasParameter[] = (pathItem.parameters ?? []) as OasParameter[];
+
     for (const method of HTTP_METHODS) {
       const op = pathItem[method];
       if (!op) continue;
@@ -211,12 +354,22 @@ function discoverEndpoints(spec: OasSpec, origin: string): DiscoveredEndpoint[] 
       const hasPaymentInfo = "x-payment-info" in op;
       const has402 = op.responses && "402" in op.responses;
 
+      // Merge parameters: operation-level overrides path-level by name+in
+      const opParams: OasParameter[] = (op.parameters ?? []) as OasParameter[];
+      const merged = [...pathLevelParams];
+      for (const p of opParams) {
+        const idx = merged.findIndex((m) => m.name === p.name && m.in === p.in);
+        if (idx >= 0) merged[idx] = p; else merged.push(p);
+      }
+      const pathParams = merged.filter((p) => p.in === "path");
+
       const endpoint: DiscoveredEndpoint = {
         path,
         method: method.toUpperCase(),
         summary: op.summary,
         fullUrl: `${serverBase}${path}`,
         tags: op.tags,
+        pathParams,
       };
 
       if (hasPaymentInfo || has402) {
@@ -261,7 +414,26 @@ function discoverEndpoints(spec: OasSpec, origin: string): DiscoveredEndpoint[] 
 
 async function checkEndpoint(endpoint: DiscoveredEndpoint): Promise<EndpointResult> {
   const checks: CheckResult[] = [];
-  const { res, error } = await safeFetch(endpoint.fullUrl, { method: endpoint.method });
+
+  // Substitute path parameters before fetching
+  const hasPlaceholders = /\{[^}]+\}/.test(endpoint.fullUrl);
+  let fetchUrl = endpoint.fullUrl;
+  let missingParams: string[] = [];
+  if (hasPlaceholders) {
+    const sub = substitutePathParams(endpoint.fullUrl, endpoint.pathParams ?? []);
+    fetchUrl = sub.url;
+    missingParams = sub.missing;
+    if (missingParams.length > 0) {
+      checks.push({
+        id: "path_params",
+        label: "Path parameters",
+        status: "warn",
+        detail: `${missingParams.map((n) => `{${n}}`).join(", ")} could not be substituted — add \`example\` values to your OpenAPI spec for accurate testing`,
+      });
+    }
+  }
+
+  const { res, error } = await safeFetch(fetchUrl, { method: endpoint.method });
 
   // Check 1: 402
   if (error || !res) {
@@ -282,11 +454,14 @@ async function checkEndpoint(endpoint: DiscoveredEndpoint): Promise<EndpointResu
       detail: "Got 402 Payment Required",
     });
   } else {
+    const hint = res.status === 400 && missingParams.length > 0
+      ? ` — path parameter(s) ${missingParams.map((n) => `{${n}}`).join(", ")} had no example in spec; the API may have rejected the request before reaching payment middleware`
+      : "";
     checks.push({
       id: "402",
       label: "Returns 402 without payment",
       status: "fail",
-      detail: `Expected 402 but got ${res.status}`,
+      detail: `Expected 402 but got ${res.status}${hint}`,
     });
     // No point inspecting payment headers if there's no 402
     return { ...endpoint, checks };
