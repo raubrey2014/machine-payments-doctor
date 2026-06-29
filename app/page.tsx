@@ -1,92 +1,36 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import Image from "next/image";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { gradeColors, letterGrade } from "./lib/scoring";
 
-function subscribeToLocation() {
-  return () => {};
-}
 
-function getBrowserDoctorApiUrl() {
-  return `${window.location.origin}/api/check`;
-}
-
-function getServerDoctorApiUrl() {
-  return "/api/check";
-}
-
-// ── Score mockup (static illustration) ───────────────────────────────────────
-
-function ScoreMockup() {
-  const cats = [
-    { label: "Discovery", score: 67, weight: "33%" },
-    { label: "Protocol", score: 100, weight: "50%" },
-    { label: "Accessibility", score: 100, weight: "17%" },
-  ];
-  const overall = 89;
-  const { text, ring } = gradeColors(overall);
-
+function TempoLogo() {
   return (
-    <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-700 shadow-xl p-6 w-full max-w-sm select-none">
-      <div className="flex items-center gap-5 mb-6">
-        <div className={`w-20 h-20 rounded-full border-4 ${ring} flex flex-col items-center justify-center shrink-0`}>
-          <span className={`text-3xl font-extrabold leading-none ${text}`}>{letterGrade(overall)}</span>
-          <span className="text-[10px] text-zinc-400 mt-0.5">{overall}/100</span>
-        </div>
-        <div>
-          <div className="font-bold text-sm text-zinc-800 dark:text-zinc-200">api.example.com</div>
-          <div className="text-xs text-zinc-400 mt-0.5">12 endpoints discovered</div>
-          <div className="text-xs text-zinc-400">via openapi.json</div>
-        </div>
-      </div>
-      <div className="space-y-3">
-        {cats.map((cat) => {
-          const c = gradeColors(cat.score);
-          return (
-            <div key={cat.label} className="flex items-center gap-3">
-              <div className="w-24 shrink-0">
-                <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">{cat.label}</div>
-                <div className="text-[10px] text-zinc-400">{cat.weight} weight</div>
-              </div>
-              <div className="flex-1 h-1.5 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-                <div className={`h-full rounded-full ${c.bar}`} style={{ width: `${cat.score}%` }} />
-              </div>
-              <span className={`text-xs font-bold w-8 text-right tabular-nums shrink-0 ${c.text}`}>{cat.score}%</span>
-            </div>
-          );
-        })}
-      </div>
-      <div className="mt-5 space-y-1.5">
-        {[
-          { icon: "✓", color: "text-emerald-500", label: "openapi.json", detail: "OpenAPI 3.1.0 · x-payment-info found" },
-          { icon: "✓", color: "text-emerald-500", label: "llms.txt", detail: "298 lines" },
-          { icon: "✗", color: "text-red-500", label: ".well-known/agent-card.json", detail: "Not found" },
-        ].map((row) => (
-          <div key={row.label} className="flex items-center gap-2 px-2.5 py-2 bg-zinc-50 dark:bg-zinc-800/60 rounded-lg">
-            <span className={`text-xs font-bold ${row.color} shrink-0`}>{row.icon}</span>
-            <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">{row.label}</span>
-            <span className="text-[10px] text-zinc-400 truncate">{row.detail}</span>
-          </div>
-        ))}
-      </div>
-    </div>
+    <svg style={{ height: 13, width: "auto" }} viewBox="0 0 832 185" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Tempo" role="img">
+      <path d="M61.5297 181.489H12.6398L57.9524 43.1662H0L12.6398 2.62335H174.096L161.456 43.1662H106.604L61.5297 181.489Z" fill="currentColor"/>
+      <path d="M243.464 181.489H127.559L185.75 2.62335H301.178L290.207 36.727H223.192L211.029 75.1235H275.898L264.928 108.75H199.821L187.658 147.385H254.196L243.464 181.489Z" fill="currentColor"/>
+      <path d="M295.923 181.489H257.05L315.479 2.62335H380.348L378.202 99.2107L441.401 2.62335H512.47L454.279 181.489H405.628L444.262 61.2912H443.547L364.131 181.489H335.274L336.466 59.8603H335.989L295.923 181.489Z" fill="currentColor"/>
+      <path d="M567.193 35.7731L548.353 93.487H553.6C565.524 93.487 575.461 90.7046 583.411 85.1399C591.36 79.4162 596.527 71.3077 598.912 60.8142C600.979 51.7517 599.866 45.3126 595.573 41.4968C591.281 37.681 584.126 35.7731 574.109 35.7731H567.193ZM519.973 181.489H471.083L529.274 2.62335H588.657C602.331 2.62335 614.096 4.84923 623.953 9.30099C633.97 13.5938 641.283 19.7944 645.894 27.903C650.664 35.8526 652.254 45.1536 650.664 55.806C648.597 69.7973 643.191 82.1191 634.447 92.7715C625.702 103.424 614.334 111.692 600.343 117.574C586.511 123.298 571.009 126.16 553.838 126.16H537.859L519.973 181.489Z" fill="currentColor"/>
+      <path d="M767.195 170.041C750.977 179.581 733.727 184.351 715.443 184.351H714.966C698.749 184.351 685.076 180.773 673.946 173.619C662.976 166.305 655.106 156.448 650.336 144.046C645.725 131.645 644.612 118.051 646.997 103.265C650.018 84.6629 656.934 67.4919 667.745 51.7517C678.557 36.0116 692.071 23.4512 708.288 14.0707C724.505 4.69025 741.836 0 760.279 0H760.755C777.609 0 791.52 3.57731 802.491 10.7319C813.62 17.8865 821.331 27.6645 825.624 40.0658C830.076 52.3082 831.03 66.061 828.486 81.3241C825.465 99.2902 818.549 116.223 807.737 132.122C796.926 147.862 783.412 160.502 767.195 170.041ZM699.703 139.277C703.995 147.385 711.468 151.439 722.121 151.439H722.597C731.342 151.439 739.451 148.18 746.923 141.661C754.555 134.984 760.994 126.08 766.241 114.951C771.646 103.821 775.621 91.4201 778.165 77.7468C780.55 64.3915 779.596 53.6596 775.303 45.551C771.01 37.2835 763.617 33.1497 753.124 33.1497H752.647C744.538 33.1497 736.668 36.4885 729.037 43.1662C721.564 49.8438 715.045 58.8268 709.481 70.1152C703.916 81.4036 699.862 93.646 697.318 106.842C694.774 120.198 695.569 131.009 699.703 139.277Z" fill="currentColor"/>
+    </svg>
   );
 }
 
-// ── Page ──────────────────────────────────────────────────────────────────────
+function StripeLogo() {
+  return (
+    <svg style={{ height: 20, width: "auto" }} viewBox="0 0 60 25" xmlns="http://www.w3.org/2000/svg" aria-label="Stripe" role="img" fill="currentColor">
+      <path fillRule="evenodd" clipRule="evenodd" d="M59.6444 14.2813h-8.062c.1843 1.9296 1.5983 2.5476 3.2032 2.5476 1.6352 0 2.9534-.3656 4.0453-.9506v3.3179c-1.1186.7115-2.5964 1.1068-4.5645 1.1068-4.011 0-6.8218-2.5122-6.8218-7.4783 0-4.19441 2.3837-7.52509 6.3017-7.52509 3.912 0 5.9537 3.28038 5.9537 7.49819 0 .3982-.0372 1.261-.0556 1.4835Zm-5.9241-5.62407c-1.0294 0-2.1739.72812-2.1739 2.58387h4.2573c0-1.85362-1.0721-2.58387-2.0834-2.58387ZM40.9547 20.303c-1.4411 0-2.322-.6087-2.9133-1.0417l-.0088 4.6271-4.1181.8755-.0014-19.19053h3.7543l.0864 1.01784c.6035-.52914 1.6114-1.29157 3.2256-1.29162 2.8925 0 5.6162 2.6052 5.6162 7.39971 0 5.2327-2.6948 7.6037-5.6409 7.6037Zm-.959-11.35573c-.9453 0-1.5376.34559-1.9669.81586l.0245 6.11967c.3997.433.9763.7813 1.9424.7813 1.5231 0 2.5437-1.6575 2.5437-3.8745 0-2.1544-1.037-3.84233-2.5437-3.84233Zm-11.7602-3.3739h4.1341V20.0088h-4.1341V5.57337Zm0-4.694699L32.3696 0v3.35821l-4.1341.87868V.878671ZM23.9198 10.2223v9.7861h-4.1156V5.57296h3.6867l.1317 1.21751c1.0035-1.7722 3.0722-1.41321 3.6209-1.21594v3.78524c-.5242-.16908-2.2894-.42779-3.3237.86253Zm-8.5525 4.7221c0 2.4275 2.5988 1.6719 3.1263 1.4609v3.3522c-.5492.3013-1.5437.5458-2.8901.5458-2.4441 0-4.2773-1.7999-4.2773-4.2379l.0173-13.17658 4.0206-.85464.0032 3.5395h3.1278V9.0857h-3.1278v5.8588-.0001Zm-4.9069.7026c0 2.9645-2.31051 4.6562-5.73464 4.6562-1.41958 0-2.92289-.2761-4.453935-.9347v-3.9319c1.382085.7516 3.093705 1.315 4.457755 1.315.91864 0 1.53106-.2459 1.53106-1.0069C6.26064 13.7786 0 14.5192 0 9.95995 0 7.04457 2.27622 5.2998 5.61655 5.2998c1.36404 0 2.72806.20934 4.09208.75351V9.9317c-1.25265-.67618-2.84332-1.05979-4.09588-1.05979-.86296 0-1.44753.24965-1.44753.8924.0001 1.85329 6.29518.97249 6.29518 5.88279v-.0001Z"/>
+    </svg>
+  );
+}
 
 export default function Home() {
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [agentPromptCopied, setAgentPromptCopied] = useState(false);
-  const doctorApiUrl = useSyncExternalStore(
-    subscribeToLocation,
-    getBrowserDoctorApiUrl,
-    getServerDoctorApiUrl
-  );
   const router = useRouter();
-  const agentPrompt = `Check our MPP integration health with Machine Payments Doctor: curl -X POST ${doctorApiUrl} -H 'Content-Type: application/json' -d '{"url":"<our site URL>"}'`;
+  const agentPrompt = `npx mppx validate`;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -110,235 +54,107 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
+    <div className="min-h-screen bg-[#141414] text-zinc-100 flex flex-col">
       {/* Nav */}
-      <nav className="border-b border-zinc-100 dark:border-zinc-800">
-        <div className="max-w-5xl mx-auto px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded bg-violet-600 flex items-center justify-center text-white font-bold text-[11px]">+</div>
-            <span className="font-semibold text-sm">Machine Payments Doctor</span>
+      <nav className="border-b border-zinc-800 shrink-0">
+        <div className="max-w-5xl mx-auto px-8 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <Image src="/logo-light.svg" alt="MPP" width={52} height={23} className="opacity-90" />
+            <span className="text-zinc-700">/</span>
+            <span className="text-sm font-medium text-zinc-400">Validator</span>
           </div>
-          <div className="flex items-center gap-6 text-xs text-zinc-400">
-            <a href="https://mpp.dev" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-600 dark:hover:text-zinc-300 transition">mpp.dev ↗</a>
-            <a href="https://x402.org" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-600 dark:hover:text-zinc-300 transition">x402.org ↗</a>
-          </div>
+          <a href="https://mpp.dev" target="_blank" rel="noopener noreferrer" className="text-[14px] font-[450] text-zinc-300/80 hover:text-white transition">
+            mpp.dev
+          </a>
         </div>
       </nav>
 
-      {/* Hero */}
-      <section className="max-w-5xl mx-auto px-6 pt-20 pb-16 text-center">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-violet-50 dark:bg-violet-950/50 border border-violet-200 dark:border-violet-800 text-xs font-medium text-violet-700 dark:text-violet-300 mb-6">
-          <span className="w-1.5 h-1.5 rounded-full bg-violet-500 animate-pulse" />
-          x402 · MPP · ATXP
-        </div>
-        <h1 className="text-5xl sm:text-6xl font-extrabold tracking-tight text-zinc-900 dark:text-zinc-50 leading-[1.1]">
-          Machine Payments<br />Doctor
-        </h1>
-        <p className="mt-5 text-lg sm:text-xl text-zinc-500 dark:text-zinc-400 max-w-xl mx-auto">
-          Diagnose your machine payments integration. Get a score, find gaps, and know exactly what AI agents see when they try to pay your API.
-        </p>
+      {/* Main */}
+      <main className="flex-1 flex flex-col">
+        {/* Content — vertically centered */}
+        <div className="flex-1 flex flex-col justify-center">
+          <div className="max-w-5xl mx-auto px-8 w-full py-16">
+            <div className="flex flex-col md:flex-row md:items-start gap-10 lg:gap-16">
 
-        <form onSubmit={handleSubmit} className="mt-8 flex gap-3 max-w-2xl mx-auto">
-          <input
-            type="url"
-            required
-            placeholder="https://api.example.com"
-            value={url}
-            onChange={(e) => { setUrl(e.target.value); setError(null); }}
-            className="flex-1 px-5 py-3.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition shadow-sm text-zinc-800 dark:text-zinc-200 placeholder:text-zinc-400"
-          />
-          <button
-            type="submit"
-            className="px-6 py-3.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold transition shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 shrink-0"
-          >
-            Check →
-          </button>
-        </form>
-
-        {error && (
-          <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>
-        )}
-
-        <div className="mt-8 max-w-2xl mx-auto">
-          <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-widest text-zinc-400">
-            <div className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
-            or
-            <div className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
-          </div>
-
-          <div className="mt-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/70 p-4 text-left">
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-3">
-                <span className="inline-flex items-center rounded-full bg-violet-100 dark:bg-violet-950/60 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-violet-700 dark:text-violet-300">
-                  Agent mode
-                </span>
-                <p className="min-w-0 flex-1 text-sm font-semibold text-zinc-800 dark:text-zinc-100">
-                  Tell your agent to fix the integration for you.
-                </p>
-                <button
-                  type="button"
-                  onClick={copyAgentPrompt}
-                  className="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-700 px-3 py-2 text-xs font-semibold text-white transition"
-                >
-                  {agentPromptCopied ? "✓ Copied!" : "Copy prompt"}
-                </button>
+              {/* Left: lockup */}
+              <div className="shrink-0 md:pt-1">
+                <Image
+                  src="/lockup-light.svg"
+                  alt="MPP — Machine Payments Protocol"
+                  width={560}
+                  height={157}
+                  className="opacity-95 h-auto"
+                  style={{ width: "clamp(300px, 40vw, 560px)" }}
+                  priority
+                />
               </div>
-              <pre className="text-xs font-mono text-zinc-600 dark:text-zinc-400 whitespace-pre overflow-x-auto leading-relaxed">
-                {agentPrompt}
-              </pre>
+
+              {/* Right: description, form, agent box */}
+              <div className="flex-1 min-w-0">
+                <p className="text-lg text-zinc-300 mb-8 max-w-md leading-relaxed">
+                  Check if your API is ready for machine payments. Score discovery, protocol compliance, and accessibility.
+                </p>
+
+                {/* Form */}
+                <form onSubmit={handleSubmit} className="flex gap-3">
+                  <input
+                    type="url"
+                    required
+                    placeholder="https://api.example.com"
+                    value={url}
+                    onChange={(e) => { setUrl(e.target.value); setError(null); }}
+                    className="flex-1 min-w-0 px-4 py-3 rounded-xl border border-zinc-700 bg-zinc-900 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-zinc-500 transition text-zinc-200 placeholder:text-zinc-600"
+                  />
+                  <button
+                    type="submit"
+                    className="px-6 py-3 rounded-xl bg-white hover:bg-zinc-100 text-zinc-900 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-white/30 shrink-0 cursor-pointer"
+                  >
+                    Check →
+                  </button>
+                </form>
+
+                {error && (
+                  <p className="mt-3 text-sm text-red-400">{error}</p>
+                )}
+
+                {/* Agent mode */}
+                <div className="mt-8">
+                  <div className="flex items-center gap-3 mb-5">
+                    <div className="h-px flex-1 bg-zinc-800" />
+                    <span className="text-xs text-zinc-600 font-mono">or</span>
+                    <div className="h-px flex-1 bg-zinc-800" />
+                  </div>
+                  <div className="flex items-center justify-between gap-4 bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3">
+                    <pre className="text-sm font-mono text-zinc-300">{agentPrompt}</pre>
+                    <button
+                      type="button"
+                      onClick={copyAgentPrompt}
+                      className="shrink-0 text-xs font-mono text-zinc-500 hover:text-white transition cursor-pointer"
+                    >
+                      {agentPromptCopied ? "✓ copied" : "copy"}
+                    </button>
+                  </div>
+                </div>
+
+              </div>
             </div>
           </div>
         </div>
-      </section>
 
-      {/* Score section */}
-      <section className="border-t border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
-        <div className="max-w-5xl mx-auto px-6 py-20 grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-violet-500 mb-3">Your score</p>
-            <h2 className="text-3xl font-bold tracking-tight leading-snug">
-              Understand your integration health — get your score
-            </h2>
-            <p className="mt-4 text-zinc-500 dark:text-zinc-400 leading-relaxed">
-              Every service gets a single 0–100 grade across three dimensions. Know exactly what AI agents see when they discover and try to pay your API — before they do.
-            </p>
-            <ul className="mt-6 space-y-2">
-              {[
-                "Parses your openapi.json to find real endpoints",
-                "Tests 402 responses across discovered paths",
-                "Checks for mainnet vs. testnet asset confusion",
-              ].map((item) => (
-                <li key={item} className="flex items-start gap-2 text-sm text-zinc-600 dark:text-zinc-400">
-                  <span className="text-violet-500 mt-0.5 shrink-0">✓</span>
-                  {item}
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="flex justify-center md:justify-end">
-            <ScoreMockup />
+        {/* Designed by footer */}
+        <div className="flex justify-end px-8 pb-6">
+          <div className="flex items-center gap-2 text-zinc-600 opacity-70">
+            <span className="text-[10px] font-mono uppercase tracking-widest">Designed by</span>
+            <a href="https://tempo.xyz" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-300 transition text-zinc-500">
+              <TempoLogo />
+            </a>
+            <span className="text-xs">×</span>
+            <a href="https://stripe.com" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-300 transition text-zinc-500">
+              <StripeLogo />
+            </a>
           </div>
         </div>
-      </section>
-
-      {/* Supported chains */}
-      <section className="border-t border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
-        <div className="max-w-5xl mx-auto px-6 py-20">
-          <div className="text-center mb-12">
-            <p className="text-xs font-semibold uppercase tracking-widest text-violet-500 mb-3">Supported payment methods</p>
-            <h2 className="text-3xl font-bold tracking-tight">Chains supported via Stripe</h2>
-            <p className="mt-4 text-zinc-500 dark:text-zinc-400 max-w-2xl mx-auto leading-relaxed">
-              Machine payments use USDC as the settlement currency. The doctor checks that your integration correctly advertises which networks you accept. All three chains below are supported through Stripe's payment infrastructure.
-            </p>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-            {[
-              {
-                name: "Base",
-                tag: "eip155:8453",
-                desc: "Ethereum L2 by Coinbase. The most common network for machine payments — fast finality, low fees, and native USDC support.",
-                asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-                color: "border-blue-200 dark:border-blue-900",
-                dot: "bg-blue-500",
-                accent: "text-blue-600 dark:text-blue-400",
-                badge: "bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300",
-              },
-              {
-                name: "Solana",
-                tag: "solana:mainnet",
-                desc: "High-throughput L1 with sub-second confirmation times. Native USDC via Circle, widely used in autonomous agent transactions.",
-                asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-                color: "border-violet-200 dark:border-violet-900",
-                dot: "bg-violet-500",
-                accent: "text-violet-600 dark:text-violet-400",
-                badge: "bg-violet-50 dark:bg-violet-950/40 text-violet-600 dark:text-violet-300",
-              },
-              {
-                name: "Tempo",
-                tag: "MPP method",
-                desc: "EVM-compatible network built for machine payments. Uses the MPP protocol natively with USDC as the payment currency.",
-                asset: "0x20c0...b9537d11c60e8b50",
-                color: "border-emerald-200 dark:border-emerald-900",
-                dot: "bg-emerald-500",
-                accent: "text-emerald-600 dark:text-emerald-400",
-                badge: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-300",
-              },
-            ].map((chain) => (
-              <div key={chain.name} className={`rounded-2xl border-2 ${chain.color} p-6 space-y-3 bg-white dark:bg-zinc-900`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className={`w-2.5 h-2.5 rounded-full ${chain.dot}`} />
-                    <span className="font-bold text-sm">{chain.name}</span>
-                  </div>
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${chain.badge}`}>{chain.tag}</span>
-                </div>
-                <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">{chain.desc}</p>
-                <div className="pt-1">
-                  <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400 mb-1">USDC contract</p>
-                  <code className="text-[10px] font-mono text-zinc-500 dark:text-zinc-400 break-all">{chain.asset}</code>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Three pillars */}
-      <section className="border-t border-zinc-100 dark:border-zinc-800">
-        <div className="max-w-5xl mx-auto px-6 py-20">
-          <div className="text-center mb-12">
-            <p className="text-xs font-semibold uppercase tracking-widest text-violet-500 mb-3">How we score</p>
-            <h2 className="text-3xl font-bold tracking-tight">Three dimensions of health</h2>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-            {[
-              {
-                label: "Discovery", weight: "33%",
-                color: "border-violet-300 dark:border-violet-700",
-                accent: "text-violet-600 dark:text-violet-400",
-                dot: "bg-violet-500",
-                desc: "Can AI agents find, read, and authenticate your service before paying?",
-                checks: ["openapi.json with x-payment-info", "llms.txt for AI context", ".well-known/agent-card.json"],
-              },
-              {
-                label: "Protocol", weight: "50%",
-                color: "border-violet-400 dark:border-violet-600",
-                accent: "text-violet-700 dark:text-violet-300",
-                dot: "bg-violet-600",
-                desc: "Does the payment challenge work correctly across your endpoints?",
-                checks: ["HTTP 402 without credentials", "MPP (WWW-Authenticate: Payment)", "x402 (PAYMENT-REQUIRED header)", "Mainnet USDC accepted"],
-              },
-              {
-                label: "Accessibility", weight: "17%",
-                color: "border-violet-200 dark:border-violet-800",
-                accent: "text-violet-500 dark:text-violet-400",
-                dot: "bg-violet-400",
-                desc: "Can browser-based and cross-origin agents reach your API?",
-                checks: ["CORS headers on all endpoints", "OPTIONS preflight support"],
-              },
-            ].map((cat) => (
-              <div key={cat.label} className={`rounded-2xl border-2 ${cat.color} p-6 space-y-4`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className={`w-2.5 h-2.5 rounded-full ${cat.dot}`} />
-                    <span className="font-bold text-sm">{cat.label}</span>
-                  </div>
-                  <span className={`text-xs font-semibold ${cat.accent} bg-violet-50 dark:bg-violet-950/40 px-2 py-0.5 rounded-full`}>{cat.weight}</span>
-                </div>
-                <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">{cat.desc}</p>
-                <ul className="space-y-1.5">
-                  {cat.checks.map((c) => (
-                    <li key={c} className="text-xs text-zinc-500 dark:text-zinc-400 flex items-start gap-1.5">
-                      <span className="text-zinc-300 dark:text-zinc-600 shrink-0 mt-0.5">›</span>
-                      {c}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      </main>
     </div>
   );
 }
