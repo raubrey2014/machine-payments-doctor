@@ -624,32 +624,45 @@ export async function runDoctorCheck({ url }: { url: string }): Promise<CheckRes
   const baseChecks: CheckResult[] = [];
 
   // ── Base check 1: openapi.json ────────────────────────────────────────────
-  const openapiUrl = resolveUrl(origin, "openapi.json");
+  const openapiCandidates = [
+    resolveUrl(origin, "openapi.json"),
+    resolveUrl(origin, "api/openapi.json"),
+  ];
   let spec: OasSpec | null = null;
   let specTitle: string | undefined;
 
   {
-    const { res, error } = await safeFetch(openapiUrl);
-    if (error || !res) {
+    let foundUrl: string | null = null;
+    let foundRes: Response | null = null;
+    let fetchError: string | null = null;
+
+    for (const candidate of openapiCandidates) {
+      const { res, error } = await safeFetch(candidate);
+      if (error) { fetchError = error; continue; }
+      if (res?.status === 200) { foundUrl = candidate; foundRes = res; break; }
+    }
+
+    if (!foundUrl || !foundRes) {
       baseChecks.push({
         id: "openapi_json",
         label: "openapi.json (MPP discovery)",
         status: "fail",
-        detail: error ?? `Could not reach ${openapiUrl}`,
+        detail: fetchError ?? `Not found at ${openapiCandidates.join(" or ")}`,
       });
-    } else if (res.status === 200) {
+    } else {
       let parseError: string | null = null;
       try {
-        spec = JSON.parse(await res.text()) as OasSpec;
+        spec = JSON.parse(await foundRes.text()) as OasSpec;
       } catch (e) {
         parseError = e instanceof Error ? e.message : String(e);
       }
+      const pathLabel = foundUrl !== openapiCandidates[0] ? ` (at ${new URL(foundUrl).pathname})` : "";
       if (parseError || !spec) {
         baseChecks.push({
           id: "openapi_json",
           label: "openapi.json (MPP discovery)",
           status: "warn",
-          detail: `Found but not valid JSON: ${parseError}`,
+          detail: `Found${pathLabel} but not valid JSON: ${parseError}`,
         });
       } else {
         const hasOpenapi = "openapi" in spec || "swagger" in spec;
@@ -660,18 +673,11 @@ export async function runDoctorCheck({ url }: { url: string }): Promise<CheckRes
           label: "openapi.json (MPP discovery)",
           status: hasOpenapi ? "pass" : "warn",
           detail: hasOpenapi
-            ? `OpenAPI ${spec.openapi ?? spec.swagger}${hasPaymentInfo ? " · x-payment-info extension found" : " · no x-payment-info extension"}`
-            : "Found but missing 'openapi' field",
+            ? `OpenAPI ${spec.openapi ?? spec.swagger}${pathLabel}${hasPaymentInfo ? " · x-payment-info extension found" : " · no x-payment-info extension"}`
+            : `Found${pathLabel} but missing 'openapi' field`,
           data: { info: spec.info, servers: spec.servers, pathCount: Object.keys(spec.paths ?? {}).length },
         });
       }
-    } else {
-      baseChecks.push({
-        id: "openapi_json",
-        label: "openapi.json (MPP discovery)",
-        status: "fail",
-        detail: `Got ${res.status} from ${openapiUrl}`,
-      });
     }
   }
 
