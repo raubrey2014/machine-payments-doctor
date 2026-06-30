@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Machine Payments Validator",
-  description: "Check if your API is ready for machine payments. Score discovery, protocol compliance, and accessibility.",
+  description: "Check if agents can find and pay for your API.",
 };
 
 export default function RootLayout({

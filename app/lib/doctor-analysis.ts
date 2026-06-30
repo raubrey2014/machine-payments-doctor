@@ -11,6 +11,14 @@ import type {
 
 export const CATEGORIES = [
   {
+    id: "protocol",
+    label: "Payments",
+    description: "Does the payment challenge work correctly?",
+    weight: 0.33,
+    baseIds: [] as string[],
+    epIds: ["402", "mpp_challenge", "x402_challenge", "payment_assets"] as string[],
+  },
+  {
     id: "discovery",
     label: "Discovery",
     description: "Can agents find and understand your service?",
@@ -19,18 +27,10 @@ export const CATEGORIES = [
     epIds: [] as string[],
   },
   {
-    id: "protocol",
-    label: "Protocol",
-    description: "Does the payment challenge work correctly?",
-    weight: 0.5,
-    baseIds: [] as string[],
-    epIds: ["402", "mpp_challenge", "x402_challenge", "payment_assets"] as string[],
-  },
-  {
     id: "accessibility",
-    label: "Accessibility",
+    label: "Reachability",
     description: "Can agents reach your API cross-origin?",
-    weight: 0.17,
+    weight: 0.33,
     baseIds: ["cors"] as string[],
     epIds: [] as string[],
   },
@@ -299,7 +299,7 @@ export function buildDoctorPrompt(result: CheckResponse): string {
           .join("\n\n")}`
       : `\n## This service scored ${result.score}/100 - no major issues found.`;
 
-  return `# Machine Payments Doctor - ${hostname}
+  return `# Machine Payments Validator - ${hostname}
 
 This is a set of improvements to make your machine payments integration more standard, powered by https://machine-payments-doctor.vercel.app/; you can see your results at https://machine-payments-doctor.vercel.app/eval/${hostname}
 ${issueSection}

@@ -227,7 +227,7 @@ export function CheckResultsView({ result }: { result: CheckResponse }) {
       <div className="bg-[#1c1c1c] rounded-xl border border-zinc-800 shadow-sm overflow-hidden">
         <div className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between gap-4">
           <div>
-            <h3 className="font-semibold text-sm text-zinc-200">Doctor prompt</h3>
+            <h3 className="font-semibold text-sm text-zinc-200">Validator prompt</h3>
             <p className="text-xs text-zinc-500 mt-0.5">
               Paste into Claude to run live x402 payment tests and get targeted fixes
             </p>

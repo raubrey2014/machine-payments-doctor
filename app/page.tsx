@@ -92,7 +92,7 @@ export default function Home() {
               {/* Right: description, form, agent box */}
               <div className="flex-1 min-w-0">
                 <p className="text-lg text-zinc-300 mb-8 max-w-md leading-relaxed">
-                  Check if your API is ready for machine payments. Score discovery, protocol compliance, and accessibility.
+                  Check if agents can find and pay for your API.
                 </p>
 
                 {/* Form */}
