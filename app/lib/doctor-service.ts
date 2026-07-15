@@ -1,5 +1,5 @@
-import { validate as mppxValidate, buildUrl } from "mppx/validation";
-import type { CheckResult as MppxCheckResult } from "mppx/validation";
+import { validateStream, buildUrl } from "mppx/validation";
+import type { CheckResult as MppxCheckResult, DiscoveryResult, EndpointSpec, ValidateOptions } from "mppx/validation";
 import * as x402 from "mppx/x402";
 import { analyzeDoctorCheck } from "./doctor-analysis";
 import type { CheckResponse, CheckResult, CheckStatus, DoctorScanResult, EndpointResult } from "./doctor-types";
@@ -170,6 +170,84 @@ function mapMppxSeverity(severity: MppxCheckResult["severity"]): CheckStatus {
   }
 }
 
+// ── Collected stream result types ─────────────────────────────────────────────
+
+type CollectedEndpoint = {
+  method: string;
+  path: string;
+  spec: EndpointSpec;
+  challenge: MppxCheckResult[];
+  errorHandling: MppxCheckResult[];
+  payment: MppxCheckResult[];
+  isMpp: boolean;
+  isNonMppPayment: boolean;
+};
+
+type CollectedResult = {
+  url: string;
+  discovery: DiscoveryResult;
+  endpoints: CollectedEndpoint[];
+};
+
+async function runMppxValidate(options: ValidateOptions): Promise<CollectedResult> {
+  let discovery: DiscoveryResult = { found: false, valid: false, endpoints: [], checks: [], doc: null };
+  const endpointMap = new Map<string, CollectedEndpoint>();
+  const endpointOrder: string[] = [];
+
+  for await (const event of validateStream(options)) {
+    switch (event.phase) {
+      case "discovery":
+        discovery = event.discovery;
+        break;
+      case "endpoint": {
+        const key = `${event.endpoint.method}:${event.endpoint.path}`;
+        if (!endpointMap.has(key)) {
+          endpointMap.set(key, {
+            method: event.endpoint.method,
+            path: event.endpoint.path,
+            spec: event.endpoint,
+            challenge: [],
+            errorHandling: [],
+            payment: [],
+            isMpp: false,
+            isNonMppPayment: false,
+          });
+          endpointOrder.push(key);
+        }
+        break;
+      }
+      case "challenge": {
+        const key = `${event.endpoint.method}:${event.endpoint.path}`;
+        const ep = endpointMap.get(key);
+        if (ep) {
+          ep.challenge = event.results;
+          ep.isMpp = event.isMpp;
+          ep.isNonMppPayment = event.isNonMppPayment;
+        }
+        break;
+      }
+      case "errorHandling": {
+        const key = `${event.endpoint.method}:${event.endpoint.path}`;
+        const ep = endpointMap.get(key);
+        if (ep) ep.errorHandling = event.results;
+        break;
+      }
+      case "payment": {
+        const key = `${event.endpoint.method}:${event.endpoint.path}`;
+        const ep = endpointMap.get(key);
+        if (ep) ep.payment = event.results;
+        break;
+      }
+    }
+  }
+
+  return {
+    url: options.url,
+    discovery,
+    endpoints: endpointOrder.map((k) => endpointMap.get(k)!),
+  };
+}
+
 // ── x402 endpoint enrichment ─────────────────────────────────────────────────
 // For endpoints that mppx identified as non-MPP (x402), re-fetch to extract
 // payment headers and do asset analysis.
@@ -289,7 +367,7 @@ export async function runDoctorCheck({ url }: { url: string }): Promise<CheckRes
   const [mppxResult, llmsResult, agentCardResult, corsResult] = await Promise.all([
     // mppx validate — handles discovery (tries /openapi.json then /api/openapi.json),
     // endpoint 402 checks, MPP challenge field validation, error handling, and x402 detection
-    mppxValidate({
+    runMppxValidate({
       url: origin,
       skipPayment: true,
     }),
@@ -375,19 +453,12 @@ export async function runDoctorCheck({ url }: { url: string }): Promise<CheckRes
   // ── Map mppx endpoint results → doctor format ─────────────────────────────
   const endpoints: EndpointResult[] = [];
 
-  // Match mppx endpoint results with their specs (for URL reconstruction)
-  const endpointSpecs = mppxResult.discovery.endpoints;
-
-  for (let i = 0; i < mppxResult.endpoints.length; i++) {
-    const ep = mppxResult.endpoints[i];
-    const spec = endpointSpecs[i];
-    const fullUrl = spec ? buildUrl(mppxResult.url, spec) : `${mppxResult.url}${ep.path}`;
+  for (const ep of mppxResult.endpoints) {
+    const fullUrl = buildUrl(mppxResult.url, ep.spec);
     const checks: CheckResult[] = [];
 
-    // Map challenge results (includes 402 check, MPP challenge validation, x402 detection)
+    // Use explicit boolean flags from validateStream challenge event
     const has402 = ep.challenge.some((c) => c.severity === "pass" && c.label === "Returns 402 without credentials");
-    const isMpp = ep.challenge.some((c) => c.severity === "pass" && c.label === "Challenge parseable");
-    const isX402 = ep.challenge.some((c) => c.label.includes("x402"));
 
     if (has402) {
       checks.push({ id: "402", label: "Returns 402 without payment", status: "pass", detail: "Got 402 Payment Required" });
@@ -400,13 +471,11 @@ export async function runDoctorCheck({ url }: { url: string }): Promise<CheckRes
         status: failResult ? "fail" : skipResult ? "skip" : "fail",
         detail: failResult?.detail ?? skipResult?.detail ?? "Did not get 402",
       });
-      if (!has402) {
-        endpoints.push({ path: ep.path, method: ep.method, fullUrl, checks });
-        continue;
-      }
+      endpoints.push({ path: ep.path, method: ep.method, fullUrl, checks });
+      continue;
     }
 
-    if (isMpp) {
+    if (ep.isMpp) {
       // MPP challenge — report the deep validation results from mppx
       const parseResult = ep.challenge.find((c) => c.label === "Challenge parseable");
       checks.push({
@@ -445,13 +514,13 @@ export async function runDoctorCheck({ url }: { url: string }): Promise<CheckRes
       // MPP endpoints don't have x402 — skip those checks
       checks.push({ id: "x402_challenge", label: "x402 payment challenge", status: "skip", detail: "Endpoint uses MPP (WWW-Authenticate: Payment)" });
       checks.push({ id: "payment_assets", label: "Accepted assets", status: "skip", detail: "Skipped — MPP endpoint (assets encoded in challenge)" });
-    } else if (isX402) {
-      // x402 detected by mppx — re-fetch for deep asset analysis
+    } else if (ep.isNonMppPayment) {
+      // x402 or other non-MPP payment protocol detected — re-fetch for deep asset analysis
       checks.push({ id: "mpp_challenge", label: "MPP payment challenge", status: "skip", detail: "No WWW-Authenticate: Payment header" });
       const x402Checks = await enrichWithX402(fullUrl);
       checks.push(...x402Checks);
     } else {
-      // Neither MPP nor x402
+      // Neither MPP nor a recognised payment protocol
       checks.push({ id: "mpp_challenge", label: "MPP payment challenge", status: "skip", detail: "No WWW-Authenticate: Payment header" });
       checks.push({ id: "x402_challenge", label: "x402 payment challenge", status: "warn", detail: "No payment headers found on 402 response" });
       checks.push({ id: "payment_assets", label: "Accepted assets", status: "skip", detail: "Skipped — no decoded payload to inspect" });
