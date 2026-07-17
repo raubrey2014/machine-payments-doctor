@@ -1,6 +1,6 @@
 {
   "name": "machine-payments-doctor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "geist": "^1.7.2",
-    "mppx": "^0.8.1",
+    "mppx": "0.0.0-main-20260715214817",
     "next": "16.2.9",
     "react": "19.2.4",
     "react-dom": "19.2.4"

@@ -1,4 +1,5 @@
-import { Challenge } from "mppx";
+import { validateStream, buildUrl } from "mppx/validation";
+import type { CheckResult as MppxCheckResult, DiscoveryResult, EndpointSpec, ValidateOptions } from "mppx/validation";
 import * as x402 from "mppx/x402";
 import { analyzeDoctorCheck } from "./doctor-analysis";
 import type { CheckResponse, CheckResult, CheckStatus, DoctorScanResult, EndpointResult } from "./doctor-types";
@@ -158,365 +159,105 @@ function extractAcceptedAssets(decoded: unknown): AcceptedAsset[] {
   });
 }
 
-// ── OpenAPI types ─────────────────────────────────────────────────────────────
+// ── Mapping mppx results → doctor format ─────────────────────────────────────
 
-interface OasSchema {
-  type?: string;
-  format?: string;
-  pattern?: string;
-  enum?: unknown[];
-  example?: unknown;
-  default?: unknown;
+function mapMppxSeverity(severity: MppxCheckResult["severity"]): CheckStatus {
+  switch (severity) {
+    case "pass": return "pass";
+    case "fail": return "fail";
+    case "warn": return "warn";
+    case "skip": return "skip";
+  }
 }
 
-interface OasParameter {
-  name: string;
-  in: "path" | "query" | "header" | "cookie";
-  required?: boolean;
-  schema?: OasSchema;
-  example?: unknown;
-}
+// ── Collected stream result types ─────────────────────────────────────────────
 
-interface OasOperation {
-  summary?: string;
-  tags?: string[];
-  responses?: Record<string, unknown>;
-  "x-payment-info"?: unknown;
-  parameters?: OasParameter[];
-}
-
-interface OasPathItem {
-  get?: OasOperation;
-  post?: OasOperation;
-  put?: OasOperation;
-  delete?: OasOperation;
-  patch?: OasOperation;
-  parameters?: OasParameter[];
-}
-
-interface OasSpec {
-  openapi?: string;
-  swagger?: string;
-  info?: { title?: string; version?: string };
-  servers?: Array<{ url: string }>;
-  paths?: Record<string, OasPathItem>;
-}
-
-const HTTP_METHODS = ["get", "post", "put", "delete", "patch"] as const;
-
-interface DiscoveredEndpoint {
-  path: string;
+type CollectedEndpoint = {
   method: string;
-  summary?: string;
-  fullUrl: string;
-  tags?: string[];
-  pathParams?: OasParameter[];
-}
+  path: string;
+  spec: EndpointSpec;
+  challenge: MppxCheckResult[];
+  errorHandling: MppxCheckResult[];
+  payment: MppxCheckResult[];
+  isMpp: boolean;
+  isNonMppPayment: boolean;
+};
 
-// ── Path parameter substitution ───────────────────────────────────────────────
+type CollectedResult = {
+  url: string;
+  discovery: DiscoveryResult;
+  endpoints: CollectedEndpoint[];
+};
 
-// Walks a regex pattern and produces a minimal matching string for common cases.
-// Handles \d{N}, [cls]{N}, literals, and optional chars (X?).
-function tryExampleFromPattern(pattern: string): string | null {
-  const p = pattern.replace(/^\^/, "").replace(/\$$/, "");
-  let result = "";
-  let i = 0;
+async function runMppxValidate(options: ValidateOptions): Promise<CollectedResult> {
+  let discovery: DiscoveryResult = { found: false, valid: false, endpoints: [], checks: [], doc: null };
+  const endpointMap = new Map<string, CollectedEndpoint>();
+  const endpointOrder: string[] = [];
 
-  const readQuantifier = (s: string, pos: number): { min: number; consumed: number } => {
-    if (pos >= s.length) return { min: 1, consumed: 0 };
-    if (s[pos] === "?") return { min: 0, consumed: 1 };
-    if (s[pos] === "*") return { min: 0, consumed: 1 };
-    if (s[pos] === "+") return { min: 1, consumed: 1 };
-    if (s[pos] === "{") {
-      const close = s.indexOf("}", pos);
-      if (close === -1) return { min: 1, consumed: 0 };
-      const min = parseInt(s.slice(pos + 1, close).split(",")[0]) || 1;
-      return { min, consumed: close - pos + 1 };
-    }
-    return { min: 1, consumed: 0 };
-  };
-
-  while (i < p.length) {
-    if (p[i] === "\\") {
-      i++;
-      const ch = p[i++];
-      const q = readQuantifier(p, i);
-      i += q.consumed;
-      const rep = q.min === 0 ? 0 : q.min;
-      if (ch === "d") result += "1".repeat(rep);
-      else if (ch === "w") result += "a".repeat(rep);
-      else if (ch === "s") result += " ".repeat(Math.max(rep, 0));
-      else result += ch.repeat(rep === 0 ? 0 : 1);
-    } else if (p[i] === "[") {
-      const close = p.indexOf("]", i + 1);
-      if (close === -1) { i++; continue; }
-      const cls = p.slice(i + 1, close);
-      i = close + 1;
-      const q = readQuantifier(p, i);
-      i += q.consumed;
-      if (q.min === 0) continue;
-      const inner = cls.startsWith("^") ? cls.slice(1) : cls;
-      let sample = "a";
-      if (/\\d/.test(inner)) sample = "1";
-      else if (inner[0] && inner[0] !== "\\") sample = inner[0];
-      result += sample.repeat(q.min);
-    } else if (p[i] === "?") {
-      // Optional quantifier on last literal — remove it
-      result = result.slice(0, -1);
-      i++;
-    } else if (p[i] === "*" || p[i] === "+") {
-      i++;
-    } else if (p[i] === "(") {
-      // Skip groups entirely
-      let depth = 1;
-      i++;
-      while (i < p.length && depth > 0) {
-        if (p[i] === "(") depth++;
-        else if (p[i] === ")") depth--;
-        i++;
-      }
-      const q = readQuantifier(p, i);
-      i += q.consumed;
-    } else if (p[i] === ".") {
-      i++;
-      const q = readQuantifier(p, i);
-      i += q.consumed;
-      result += "a".repeat(q.min === 0 ? 0 : q.min);
-    } else {
-      result += p[i++];
-    }
-  }
-
-  return result || null;
-}
-
-function exampleForParam(param: OasParameter): string | null {
-  if (param.example !== undefined) return String(param.example);
-  const s = param.schema;
-  if (!s) return null;
-  if (s.example !== undefined) return String(s.example);
-  if (s.default !== undefined) return String(s.default);
-  if (s.enum && s.enum.length > 0) return String(s.enum[0]);
-  if (s.pattern) {
-    const v = tryExampleFromPattern(s.pattern);
-    if (v) return v;
-  }
-  switch (s.type) {
-    case "integer":
-    case "number": return "1";
-    case "boolean": return "true";
-    case "string":
-      switch (s.format) {
-        case "uuid": return "00000000-0000-0000-0000-000000000001";
-        case "email": return "user@example.com";
-        case "date": return "2024-01-01";
-        case "date-time": return "2024-01-01T00:00:00Z";
-        case "uri": return "https://example.com";
-        default: return null;
-      }
-    default: return null;
-  }
-}
-
-function substitutePathParams(url: string, params: OasParameter[]): { url: string; missing: string[] } {
-  const missing: string[] = [];
-  let result = url;
-  for (const match of [...url.matchAll(/\{([^}]+)\}/g)]) {
-    const name = match[1];
-    const param = params.find((p) => p.name === name && p.in === "path");
-    const value = param ? exampleForParam(param) : null;
-    if (value !== null) {
-      result = result.replace(`{${name}}`, encodeURIComponent(value));
-    } else {
-      missing.push(name);
-    }
-  }
-  return { url: result, missing };
-}
-
-function discoverEndpoints(spec: OasSpec, origin: string): DiscoveredEndpoint[] {
-  const rawServerUrl = spec.servers?.[0]?.url ?? origin;
-  const serverBase = rawServerUrl.startsWith("http")
-    ? rawServerUrl.replace(/\/$/, "")
-    : `${origin}${rawServerUrl}`.replace(/\/$/, "");
-
-  const paths = spec.paths ?? {};
-  const payment: DiscoveredEndpoint[] = [];
-  const nonPayment: DiscoveredEndpoint[] = [];
-
-  for (const [path, pathItem] of Object.entries(paths)) {
-    const pathLevelParams: OasParameter[] = (pathItem.parameters ?? []) as OasParameter[];
-
-    for (const method of HTTP_METHODS) {
-      const op = pathItem[method];
-      if (!op) continue;
-
-      const hasPaymentInfo = "x-payment-info" in op;
-      const has402 = op.responses && "402" in op.responses;
-
-      // Merge parameters: operation-level overrides path-level by name+in
-      const opParams: OasParameter[] = (op.parameters ?? []) as OasParameter[];
-      const merged = [...pathLevelParams];
-      for (const p of opParams) {
-        const idx = merged.findIndex((m) => m.name === p.name && m.in === p.in);
-        if (idx >= 0) merged[idx] = p; else merged.push(p);
-      }
-      const pathParams = merged.filter((p) => p.in === "path");
-
-      const endpoint: DiscoveredEndpoint = {
-        path,
-        method: method.toUpperCase(),
-        summary: op.summary,
-        fullUrl: `${serverBase}${path}`,
-        tags: op.tags,
-        pathParams,
-      };
-
-      if (hasPaymentInfo || has402) {
-        payment.push(endpoint);
-      } else {
-        nonPayment.push(endpoint);
-      }
-    }
-  }
-
-  const pool = payment.length > 0 ? payment : nonPayment.filter((e) => e.method === "GET");
-
-  // Pick one endpoint per tag group for diversity, then fill up to 8
-  const seenTags = new Set<string>();
-  const seenPaths = new Set<string>();
-  const selected: DiscoveredEndpoint[] = [];
-
-  // First pass: one per tag
-  for (const ep of pool) {
-    if (selected.length >= 8) break;
-    const tag = ep.tags?.[0] ?? "__untagged__";
-    if (!seenTags.has(tag) && !seenPaths.has(ep.path)) {
-      selected.push(ep);
-      seenTags.add(tag);
-      seenPaths.add(ep.path);
-    }
-  }
-
-  // Second pass: fill remaining slots with unseen paths
-  for (const ep of pool) {
-    if (selected.length >= 8) break;
-    if (!seenPaths.has(ep.path)) {
-      selected.push(ep);
-      seenPaths.add(ep.path);
-    }
-  }
-
-  return selected;
-}
-
-// ── Per-endpoint checks ───────────────────────────────────────────────────────
-
-async function checkEndpoint(endpoint: DiscoveredEndpoint): Promise<EndpointResult> {
-  const checks: CheckResult[] = [];
-
-  // Substitute path parameters before fetching
-  const hasPlaceholders = /\{[^}]+\}/.test(endpoint.fullUrl);
-  let fetchUrl = endpoint.fullUrl;
-  let missingParams: string[] = [];
-  if (hasPlaceholders) {
-    const sub = substitutePathParams(endpoint.fullUrl, endpoint.pathParams ?? []);
-    fetchUrl = sub.url;
-    missingParams = sub.missing;
-    if (missingParams.length > 0) {
-      checks.push({
-        id: "path_params",
-        label: "Path parameters",
-        status: "warn",
-        detail: `${missingParams.map((n) => `{${n}}`).join(", ")} could not be substituted — add \`example\` values to your OpenAPI spec for accurate testing`,
-      });
-    }
-  }
-
-  const { res, error } = await safeFetch(fetchUrl, { method: endpoint.method });
-
-  // Check 1: 402
-  if (error || !res) {
-    checks.push({
-      id: "402",
-      label: "Returns 402 without payment",
-      status: "fail",
-      detail: error ?? "No response",
-    });
-    return { ...endpoint, checks };
-  }
-
-  if (res.status === 402) {
-    checks.push({
-      id: "402",
-      label: "Returns 402 without payment",
-      status: "pass",
-      detail: "Got 402 Payment Required",
-    });
-  } else {
-    const hint = res.status === 400 && missingParams.length > 0
-      ? ` — path parameter(s) ${missingParams.map((n) => `{${n}}`).join(", ")} had no example in spec; the API may have rejected the request before reaching payment middleware`
-      : "";
-    checks.push({
-      id: "402",
-      label: "Returns 402 without payment",
-      status: "fail",
-      detail: `Expected 402 but got ${res.status}${hint}`,
-    });
-    // No point inspecting payment headers if there's no 402
-    return { ...endpoint, checks };
-  }
-
-  // Check 2: MPP payment challenge (WWW-Authenticate: Payment ...)
-  const wwwAuth = res.headers.get("www-authenticate") ?? "";
-  if (wwwAuth) {
-    if (/^Payment\s/i.test(wwwAuth)) {
-      try {
-        const challenges = Challenge.deserializeList(wwwAuth);
-        if (challenges.length > 0) {
-          const c = challenges[0];
-          const methods = [...new Set(challenges.map((ch) => ch.method))].join(", ");
-          checks.push({
-            id: "mpp_challenge",
-            label: "MPP payment challenge",
-            status: "pass",
-            detail: `method=${methods}, realm="${c.realm}", intent="${c.intent}"`,
-            data: challenges.length === 1 ? c : challenges,
+  for await (const event of validateStream(options)) {
+    switch (event.phase) {
+      case "discovery":
+        discovery = event.discovery;
+        break;
+      case "endpoint": {
+        const key = `${event.endpoint.method}:${event.endpoint.path}`;
+        if (!endpointMap.has(key)) {
+          endpointMap.set(key, {
+            method: event.endpoint.method,
+            path: event.endpoint.path,
+            spec: event.endpoint,
+            challenge: [],
+            errorHandling: [],
+            payment: [],
+            isMpp: false,
+            isNonMppPayment: false,
           });
-        } else {
-          checks.push({
-            id: "mpp_challenge",
-            label: "MPP payment challenge",
-            status: "warn",
-            detail: "WWW-Authenticate: Payment header found but no challenges parsed",
-          });
+          endpointOrder.push(key);
         }
-      } catch (e) {
-        checks.push({
-          id: "mpp_challenge",
-          label: "MPP payment challenge",
-          status: "warn",
-          detail: `WWW-Authenticate: Payment header invalid: ${(e instanceof Error ? e.message : String(e)).slice(0, 100)}`,
-        });
+        break;
       }
-    } else {
-      checks.push({
-        id: "mpp_challenge",
-        label: "MPP payment challenge",
-        status: "skip",
-        detail: "WWW-Authenticate present but not MPP Payment scheme",
-      });
+      case "challenge": {
+        const key = `${event.endpoint.method}:${event.endpoint.path}`;
+        const ep = endpointMap.get(key);
+        if (ep) {
+          ep.challenge = event.results;
+          ep.isMpp = event.isMpp;
+          ep.isNonMppPayment = event.isNonMppPayment;
+        }
+        break;
+      }
+      case "errorHandling": {
+        const key = `${event.endpoint.method}:${event.endpoint.path}`;
+        const ep = endpointMap.get(key);
+        if (ep) ep.errorHandling = event.results;
+        break;
+      }
+      case "payment": {
+        const key = `${event.endpoint.method}:${event.endpoint.path}`;
+        const ep = endpointMap.get(key);
+        if (ep) ep.payment = event.results;
+        break;
+      }
     }
-  } else {
-    checks.push({
-      id: "mpp_challenge",
-      label: "MPP payment challenge",
-      status: "skip",
-      detail: "No WWW-Authenticate: Payment header",
-    });
   }
 
-  // Check 3: x402 payment challenge (PAYMENT-REQUIRED or X-Payment-Required)
+  return {
+    url: options.url,
+    discovery,
+    endpoints: endpointOrder.map((k) => endpointMap.get(k)!),
+  };
+}
+
+// ── x402 endpoint enrichment ─────────────────────────────────────────────────
+// For endpoints that mppx identified as non-MPP (x402), re-fetch to extract
+// payment headers and do asset analysis.
+
+async function enrichWithX402(fetchUrl: string): Promise<CheckResult[]> {
+  const checks: CheckResult[] = [];
+  const { res, error } = await safeFetch(fetchUrl);
+  if (error || !res || res.status !== 402) return checks;
+
+  // x402 payment challenge (PAYMENT-REQUIRED or X-Payment-Required)
   const paymentRequiredRaw =
     res.headers.get("payment-required") ??
     res.headers.get("x-payment-required") ??
@@ -554,7 +295,7 @@ async function checkEndpoint(endpoint: DiscoveredEndpoint): Promise<EndpointResu
     });
   }
 
-  // Check 4: accepted assets — mainnet USDC + network names + testnet detection
+  // Accepted assets — mainnet USDC + network names + testnet detection
   if (decodedPayload !== null) {
     const assets = extractAcceptedAssets(decodedPayload);
 
@@ -613,7 +354,7 @@ async function checkEndpoint(endpoint: DiscoveredEndpoint): Promise<EndpointResu
     });
   }
 
-  return { ...endpoint, checks };
+  return checks;
 }
 
 // ── Main service ─────────────────────────────────────────────────────────────
@@ -621,68 +362,16 @@ async function checkEndpoint(endpoint: DiscoveredEndpoint): Promise<EndpointResu
 export async function runDoctorCheck({ url }: { url: string }): Promise<CheckResponse> {
   const targetUrl = new URL(url).toString();
   const origin = originOf(targetUrl);
-  const baseChecks: CheckResult[] = [];
 
-  // ── Base check 1: openapi.json ────────────────────────────────────────────
-  const openapiCandidates = [
-    resolveUrl(origin, "openapi.json"),
-    resolveUrl(origin, "api/openapi.json"),
-  ];
-  let spec: OasSpec | null = null;
-  let specTitle: string | undefined;
+  // Run mppx validate (MPP protocol checks) and supplemental checks in parallel
+  const [mppxResult, llmsResult, agentCardResult, corsResult] = await Promise.all([
+    // mppx validate — handles discovery (tries /openapi.json then /api/openapi.json),
+    // endpoint 402 checks, MPP challenge field validation, error handling, and x402 detection
+    runMppxValidate({
+      url: origin,
+      skipPayment: true,
+    }),
 
-  {
-    let foundUrl: string | null = null;
-    let foundRes: Response | null = null;
-    let fetchError: string | null = null;
-
-    for (const candidate of openapiCandidates) {
-      const { res, error } = await safeFetch(candidate);
-      if (error) { fetchError = error; continue; }
-      if (res?.status === 200) { foundUrl = candidate; foundRes = res; break; }
-    }
-
-    if (!foundUrl || !foundRes) {
-      baseChecks.push({
-        id: "openapi_json",
-        label: "openapi.json (MPP discovery)",
-        status: "fail",
-        detail: fetchError ?? `Not found at ${openapiCandidates.join(" or ")}`,
-      });
-    } else {
-      let parseError: string | null = null;
-      try {
-        spec = JSON.parse(await foundRes.text()) as OasSpec;
-      } catch (e) {
-        parseError = e instanceof Error ? e.message : String(e);
-      }
-      const pathLabel = foundUrl !== openapiCandidates[0] ? ` (at ${new URL(foundUrl).pathname})` : "";
-      if (parseError || !spec) {
-        baseChecks.push({
-          id: "openapi_json",
-          label: "openapi.json (MPP discovery)",
-          status: "warn",
-          detail: `Found${pathLabel} but not valid JSON: ${parseError}`,
-        });
-      } else {
-        const hasOpenapi = "openapi" in spec || "swagger" in spec;
-        const hasPaymentInfo = JSON.stringify(spec).includes("x-payment-info");
-        specTitle = spec.info?.title;
-        baseChecks.push({
-          id: "openapi_json",
-          label: "openapi.json (MPP discovery)",
-          status: hasOpenapi ? "pass" : "warn",
-          detail: hasOpenapi
-            ? `OpenAPI ${spec.openapi ?? spec.swagger}${pathLabel}${hasPaymentInfo ? " · x-payment-info extension found" : " · no x-payment-info extension"}`
-            : `Found${pathLabel} but missing 'openapi' field`,
-          data: { info: spec.info, servers: spec.servers, pathCount: Object.keys(spec.paths ?? {}).length },
-        });
-      }
-    }
-  }
-
-  // ── Run remaining base checks in parallel ─────────────────────────────────
-  const [llmsResult, agentCardResult, corsResult] = await Promise.all([
     // llms.txt
     safeFetch(resolveUrl(origin, "llms.txt")).then(async ({ res, error }) => {
       if (error || !res) return { id: "llms_txt", label: "llms.txt (AI context file)", status: "fail" as CheckStatus, detail: error ?? "No response" };
@@ -733,37 +422,138 @@ export async function runDoctorCheck({ url }: { url: string }): Promise<CheckRes
     }),
   ]);
 
+  // ── Map mppx discovery → base checks ──────────────────────────────────────
+  const baseChecks: CheckResult[] = [];
+  const doc = mppxResult.discovery.doc as Record<string, unknown> | null;
+  const specTitle = doc?.info ? (doc.info as Record<string, unknown>).title as string | undefined : undefined;
+
+  if (mppxResult.discovery.found) {
+    const hasPaymentInfo = doc ? JSON.stringify(doc).includes("x-payment-info") : false;
+    const version = doc?.openapi ?? doc?.swagger ?? "unknown";
+    const pathCount = doc?.paths ? Object.keys(doc.paths as object).length : 0;
+    baseChecks.push({
+      id: "openapi_json",
+      label: "openapi.json (MPP discovery)",
+      status: mppxResult.discovery.valid ? "pass" : "warn",
+      detail: `OpenAPI ${version}${hasPaymentInfo ? " · x-payment-info extension found" : " · no x-payment-info extension"}`,
+      data: { info: doc?.info, servers: doc?.servers, pathCount },
+    });
+  } else {
+    const failCheck = mppxResult.discovery.checks.find((c) => c.severity === "fail");
+    baseChecks.push({
+      id: "openapi_json",
+      label: "openapi.json (MPP discovery)",
+      status: "fail",
+      detail: failCheck?.detail ?? "Not found",
+    });
+  }
+
   baseChecks.push(llmsResult, agentCardResult, corsResult);
 
-  // ── Discover and test endpoints ───────────────────────────────────────────
-  let endpoints: EndpointResult[] = [];
-  let totalEndpoints = 0;
+  // ── Map mppx endpoint results → doctor format ─────────────────────────────
+  const endpoints: EndpointResult[] = [];
 
-  if (spec) {
-    const discovered = discoverEndpoints(spec, origin);
-    // Count all payment-marked endpoints in spec (before capping)
-    totalEndpoints = Object.entries(spec.paths ?? {}).reduce((count, [, pathItem]) => {
-      for (const method of HTTP_METHODS) {
-        const op = pathItem[method];
-        if (op && ("x-payment-info" in op || (op.responses && "402" in op.responses))) count++;
+  for (const ep of mppxResult.endpoints) {
+    const fullUrl = buildUrl(mppxResult.url, ep.spec);
+    const checks: CheckResult[] = [];
+
+    // Use explicit boolean flags from validateStream challenge event
+    const has402 = ep.challenge.some((c) => c.severity === "pass" && c.label === "Returns 402 without credentials");
+
+    if (has402) {
+      checks.push({ id: "402", label: "Returns 402 without payment", status: "pass", detail: "Got 402 Payment Required" });
+    } else {
+      const failResult = ep.challenge.find((c) => c.severity === "fail" && c.label === "Returns 402 without credentials");
+      const skipResult = ep.challenge.find((c) => c.severity === "skip" && c.label === "Returns 402 without credentials");
+      checks.push({
+        id: "402",
+        label: "Returns 402 without payment",
+        status: failResult ? "fail" : skipResult ? "skip" : "fail",
+        detail: failResult?.detail ?? skipResult?.detail ?? "Did not get 402",
+      });
+      endpoints.push({ path: ep.path, method: ep.method, fullUrl, checks });
+      continue;
+    }
+
+    if (ep.isMpp) {
+      // MPP challenge — report the deep validation results from mppx
+      const parseResult = ep.challenge.find((c) => c.label === "Challenge parseable");
+      checks.push({
+        id: "mpp_challenge",
+        label: "MPP payment challenge",
+        status: "pass",
+        detail: parseResult?.detail ? `Validated: ${parseResult.detail}` : "Valid MPP challenge",
+      });
+
+      // Include deeper field-level checks from mppx as additional detail
+      const fieldChecks = ep.challenge.filter((c) =>
+        c.label !== "Returns 402 without credentials" &&
+        c.label !== "WWW-Authenticate header present" &&
+        c.label !== "Challenge parseable" &&
+        c.label !== "Not an MPP endpoint"
+      );
+      for (const fc of fieldChecks) {
+        checks.push({
+          id: `mpp_${fc.label.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
+          label: fc.label,
+          status: mapMppxSeverity(fc.severity),
+          detail: fc.detail ?? "",
+        });
       }
-      return count;
-    }, 0);
 
-    // Test up to 8 in parallel
-    endpoints = await Promise.all(discovered.map(checkEndpoint));
+      // Include error handling results
+      for (const eh of ep.errorHandling) {
+        checks.push({
+          id: `mpp_error_${eh.label.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
+          label: eh.label,
+          status: mapMppxSeverity(eh.severity),
+          detail: eh.detail ?? "",
+        });
+      }
+
+      // MPP endpoints don't have x402 — skip those checks
+      checks.push({ id: "x402_challenge", label: "x402 payment challenge", status: "skip", detail: "Endpoint uses MPP (WWW-Authenticate: Payment)" });
+      checks.push({ id: "payment_assets", label: "Accepted assets", status: "skip", detail: "Skipped — MPP endpoint (assets encoded in challenge)" });
+    } else if (ep.isNonMppPayment) {
+      // x402 or other non-MPP payment protocol detected — re-fetch for deep asset analysis
+      checks.push({ id: "mpp_challenge", label: "MPP payment challenge", status: "skip", detail: "No WWW-Authenticate: Payment header" });
+      const x402Checks = await enrichWithX402(fullUrl);
+      checks.push(...x402Checks);
+    } else {
+      // Neither MPP nor a recognised payment protocol
+      checks.push({ id: "mpp_challenge", label: "MPP payment challenge", status: "skip", detail: "No WWW-Authenticate: Payment header" });
+      checks.push({ id: "x402_challenge", label: "x402 payment challenge", status: "warn", detail: "No payment headers found on 402 response" });
+      checks.push({ id: "payment_assets", label: "Accepted assets", status: "skip", detail: "Skipped — no decoded payload to inspect" });
+    }
+
+    endpoints.push({ path: ep.path, method: ep.method, fullUrl, checks });
   }
 
-  // If no spec, fall back to testing the target URL directly
+  // If no endpoints were tested (no spec, no --endpoint), fall back to testing the target URL directly
   if (endpoints.length === 0) {
-    const fallback = await checkEndpoint({
-      path: new URL(targetUrl).pathname || "/",
+    const fallbackUrl = targetUrl;
+    const fallbackChecks: CheckResult[] = [];
+    const { res, error } = await safeFetch(fallbackUrl);
+    if (error || !res) {
+      fallbackChecks.push({ id: "402", label: "Returns 402 without payment", status: "fail", detail: error ?? "No response" });
+    } else if (res.status === 402) {
+      fallbackChecks.push({ id: "402", label: "Returns 402 without payment", status: "pass", detail: "Got 402 Payment Required" });
+      const x402Checks = await enrichWithX402(fallbackUrl);
+      fallbackChecks.push({ id: "mpp_challenge", label: "MPP payment challenge", status: "skip", detail: "No endpoint-specific MPP data" });
+      fallbackChecks.push(...x402Checks);
+    } else {
+      fallbackChecks.push({ id: "402", label: "Returns 402 without payment", status: "fail", detail: `Expected 402 but got ${res.status}` });
+    }
+    endpoints.push({
+      path: new URL(fallbackUrl).pathname || "/",
       method: "GET",
-      fullUrl: targetUrl,
+      fullUrl: fallbackUrl,
+      checks: fallbackChecks,
     });
-    endpoints = [fallback];
-    totalEndpoints = 1;
   }
+
+  // Count total payment-marked endpoints from discovery doc
+  const totalEndpoints = mppxResult.discovery.endpoints.length || endpoints.length;
 
   const scan: DoctorScanResult = {
     url: targetUrl,
